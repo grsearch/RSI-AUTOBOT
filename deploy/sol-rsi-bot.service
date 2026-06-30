@@ -1,0 +1,26 @@
+[Unit]
+Description=SOL RSI automatic trading bot
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/sol-rsi-bot
+ExecStartPre=/usr/bin/pnpm prisma migrate deploy
+ExecStart=/usr/bin/node dist/server.js
+Restart=always
+RestartSec=5
+Environment=NODE_ENV=production
+EnvironmentFile=/opt/sol-rsi-bot/.env
+User=solbot
+Group=solbot
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/sol-rsi-bot/backups
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
