@@ -1,6 +1,7 @@
 import type { OhlcvCandle } from "@prisma/client";
 import Decimal from "decimal.js";
 import { prisma } from "../db.js";
+import { MARKET_CANDLE_TIMEFRAME } from "../domain/market.js";
 import { evaluateBuy, evaluateSell, shouldAddPosition } from "../domain/strategy.js";
 import type { Candle, MarketPoint, PositionPoint, StrategyParameters } from "../domain/types.js";
 
@@ -28,7 +29,7 @@ export const defaultBacktestParams: BacktestParams = {
   maxAddPositionCount: 1,
   trailingActivateProfitPercent: 20,
   trailingDrawdownPercent: 10,
-  emergencyStopLossPercent: 45,
+  emergencyStopLossPercent: 0,
   slippagePercent: 6,
   buyFeeSol: 0.0005,
   sellFeeSol: 0.0002
@@ -64,7 +65,7 @@ export class BacktestService {
   async run(address: string, startTime: Date, endTime: Date, params: BacktestParams, name = "RSI-7 backtest") {
     const token = await prisma.token.findUniqueOrThrow({ where: { address } });
     const rows = await prisma.ohlcvCandle.findMany({
-      where: { tokenId: token.id, timestamp: { gte: startTime, lte: endTime } },
+      where: { tokenId: token.id, timeframe: MARKET_CANDLE_TIMEFRAME, timestamp: { gte: startTime, lte: endTime } },
       orderBy: { timestamp: "asc" }
     });
     if (rows.length < 10) throw new Error("Not enough stored candles in the selected range");

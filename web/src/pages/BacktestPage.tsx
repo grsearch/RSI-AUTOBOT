@@ -4,7 +4,7 @@ import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "rec
 import { api, pct, shortAddress, sol, time } from "../api";
 import { Empty, ErrorNotice, Metric, PageHeader } from "../components";
 import { useApi } from "../hooks";
-import type { BacktestRun, Token } from "../types";
+import type { BacktestRun, PageResponse, Token } from "../types";
 
 const initialParams = {
   buyAmountSol: 0.2,
@@ -14,12 +14,12 @@ const initialParams = {
   rsiBuyBelow: 30,
   trailingActivateProfitPercent: 20,
   trailingDrawdownPercent: 10,
-  emergencyStopLossPercent: 45,
+  emergencyStopLossPercent: 0,
   slippagePercent: 6
 };
 
 export function BacktestPage() {
-  const tokens = useApi<Token[]>("/api/tokens");
+  const tokens = useApi<PageResponse<"tokens", Token>>("/api/tokens?page=1&pageSize=100");
   const runs = useApi<BacktestRun[]>("/api/backtest/runs");
   const [address, setAddress] = useState("");
   const [days, setDays] = useState(7);
@@ -66,10 +66,10 @@ export function BacktestPage() {
 
   const summary = selected?.summaryJson;
   return <section className="page">
-    <PageHeader eyebrow="历史检验" title="策略回测" description="使用机器人已保存的逐分钟行情验证策略，不把未来数据偷渡进过去。" />
+    <PageHeader eyebrow="历史检验" title="策略回测" description="使用机器人已保存的 5 分钟行情验证策略，不把未来数据偷渡进过去。" />
     {Boolean(error) && <ErrorNotice error={error} />}
     <form className="backtest-form" onSubmit={run}>
-      <label><span>代币</span><select required value={address} onChange={(event) => setAddress(event.target.value)}><option value="">选择已监控代币</option>{tokens.data?.map((token) => <option key={token.id} value={token.address}>{token.symbol} · {shortAddress(token.address)}</option>)}</select></label>
+      <label><span>代币</span><select required value={address} onChange={(event) => setAddress(event.target.value)}><option value="">选择已监控代币</option>{tokens.data?.tokens.map((token) => <option key={token.id} value={token.address}>{token.symbol} · {shortAddress(token.address)}</option>)}</select></label>
       <label><span>回测范围</span><select value={days} onChange={(event) => setDays(Number(event.target.value))}><option value={1}>最近 1 天</option><option value={7}>最近 7 天</option><option value={30}>最近 30 天</option><option value={90}>最近 90 天</option></select></label>
       <button className="primary" disabled={busy}><Play size={17} />{busy ? "计算中" : "运行回测"}</button>
       <details className="advanced"><summary>调整策略参数</summary><div className="advanced-grid">{Object.entries(params).map(([key, value]) => <label key={key}><span>{paramLabel(key)}</span><input type="number" step="any" value={value} onChange={(event) => setParams((current) => ({ ...current, [key]: Number(event.target.value) }))} /></label>)}</div></details>
@@ -91,7 +91,7 @@ function paramLabel(key: string): string {
     rsiBuyBelow: "RSI 买入阈值",
     trailingActivateProfitPercent: "移动止盈激活 %",
     trailingDrawdownPercent: "最高价回撤 %",
-    emergencyStopLossPercent: "紧急止损 %",
+    emergencyStopLossPercent: "紧急止损 %（0=关闭）",
     slippagePercent: "滑点 %"
   };
   return labels[key] ?? key;

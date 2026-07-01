@@ -47,14 +47,14 @@ const schema = z.object({
   TRAILING_DRAWDOWN_PERCENT: numberFromEnv(10).pipe(z.number().min(0.1).max(100)),
   BATCH_SELL_DELAY_MS: intFromEnv(3000).pipe(z.number().min(0).max(60_000)),
   BATCH_SELL_FIRST_PERCENT: numberFromEnv(50).pipe(z.number().min(1).max(99)),
-  EMERGENCY_STOP_LOSS_PERCENT: numberFromEnv(45).pipe(z.number().min(1).max(100)),
+  EMERGENCY_STOP_LOSS_PERCENT: numberFromEnv(0).pipe(z.number().min(0).max(100)),
   MAX_PRICE_IMPACT_PERCENT: numberFromEnv(8).pipe(z.number().min(0.1).max(100)),
   MIN_WALLET_RESERVE_SOL: numberFromEnv(0.05).pipe(z.number().min(0)),
   BLOCK_MINT_AUTHORITY: boolFromEnv(true),
   BLOCK_FREEZE_AUTHORITY: boolFromEnv(true),
-  MARKET_STALE_AFTER_SECONDS: intFromEnv(120).pipe(z.number().min(30).max(3600)),
+  MARKET_STALE_AFTER_SECONDS: intFromEnv(360).pipe(z.number().min(30).max(3600)),
   TRADING_PAUSED: boolFromEnv(false),
-  MARKET_FILTER_INTERVAL_MS: intFromEnv(60_000).pipe(z.number().min(10_000)),
+  MARKET_FILTER_INTERVAL_MS: intFromEnv(180_000).pipe(z.number().min(10_000)),
   STRATEGY_INTERVAL_MS: intFromEnv(30_000).pipe(z.number().min(5_000)),
   MARKET_REQUEST_CONCURRENCY: intFromEnv(3).pipe(z.number().min(1).max(20))
 });

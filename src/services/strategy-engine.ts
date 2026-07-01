@@ -3,6 +3,7 @@ import { Decimal } from "decimal.js";
 import { config } from "../config.js";
 import { prisma } from "../db.js";
 import { evaluateBuy, evaluateSell, shouldAddPosition } from "../domain/strategy.js";
+import { MARKET_CANDLE_TIMEFRAME } from "../domain/market.js";
 import type { MarketPoint, StrategyParameters } from "../domain/types.js";
 import { logger } from "../logger.js";
 import { delay } from "./http.js";
@@ -36,7 +37,11 @@ export class StrategyEngine {
       where: { id: tokenId },
       include: { positions: { where: { status: "OPEN" }, take: 1, orderBy: { createdAt: "desc" } } }
     });
-    if (!token || token.status === "REMOVED" || token.status === "CLOSED" || token.status === "ERROR") return;
+    if (!token || token.status === "REMOVED" || token.status === "ERROR") return;
+    if (token.status === "CLOSED" && !token.positions[0]) {
+      await prisma.token.update({ where: { id: token.id }, data: { status: "WATCHING", removedAt: null, removeReason: null } });
+      token.status = "WATCHING";
+    }
     if (!hasFreshMarket(token)) return;
     const market = marketFromToken(token);
     const position = token.positions[0];
@@ -70,7 +75,7 @@ export class StrategyEngine {
 
   private async processWatching(token: Token, market: MarketPoint): Promise<void> {
     const [candles, priorSnapshot] = await Promise.all([
-      prisma.ohlcvCandle.findMany({ where: { tokenId: token.id }, orderBy: { timestamp: "desc" }, take: 3 }),
+      prisma.ohlcvCandle.findMany({ where: { tokenId: token.id, timeframe: MARKET_CANDLE_TIMEFRAME }, orderBy: { timestamp: "desc" }, take: 3 }),
       findLiquidityLookback(token.id)
     ]);
     const decision = evaluateBuy(
@@ -146,7 +151,7 @@ export class StrategyEngine {
     if (!config.ADD_POSITION_ENABLED) return;
     if (await this.buyingPaused()) return;
     const [candles, priorSnapshot] = await Promise.all([
-      prisma.ohlcvCandle.findMany({ where: { tokenId: token.id }, orderBy: { timestamp: "desc" }, take: 3 }),
+      prisma.ohlcvCandle.findMany({ where: { tokenId: token.id, timeframe: MARKET_CANDLE_TIMEFRAME }, orderBy: { timestamp: "desc" }, take: 3 }),
       findLiquidityLookback(token.id)
     ]);
     const buyDecision = evaluateBuy(
@@ -302,8 +307,9 @@ function pendingTrade(token: Token, side: "BUY_INITIAL" | "BUY_ADD" | "SELL", ma
 }
 
 function hasFreshMarket(token: Token): boolean {
+  const staleAfterMs = Math.max(config.MARKET_STALE_AFTER_SECONDS * 1000, config.MARKET_FILTER_INTERVAL_MS * 2);
   return token.priceUsd != null && token.fdvUsd != null && token.liquidityUsd != null && token.lastMarketCheckAt != null
-    && Date.now() - token.lastMarketCheckAt.getTime() <= config.MARKET_STALE_AFTER_SECONDS * 1000;
+    && Date.now() - token.lastMarketCheckAt.getTime() <= staleAfterMs;
 }
 
 function marketFromToken(token: Token): MarketPoint {

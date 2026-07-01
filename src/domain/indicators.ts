@@ -33,6 +33,8 @@ function rsiFromAverages(averageGain: number, averageLoss: number): number {
 }
 
 export function attachRsi(candles: Candle[], period: number): Candle[] {
+  // Do not discard low-range candles: volatility alone cannot distinguish a
+  // synthetic candle from a real low-volatility trade interval.
   const values = calculateRsi(candles.map((candle) => candle.close), period);
   return candles.map((candle, index) => ({ ...candle, rsi: values[index] }));
 }

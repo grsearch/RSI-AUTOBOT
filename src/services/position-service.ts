@@ -161,7 +161,7 @@ export class PositionService {
         where: { id: position.tokenId },
         data: shouldRemove
           ? { status: "REMOVED", removedAt: new Date(), removeReason: reason }
-          : { status: "CLOSED" }
+          : { status: "WATCHING", removedAt: null, removeReason: null }
       });
       return updated;
     });

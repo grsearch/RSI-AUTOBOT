@@ -6,6 +6,9 @@ import type {
   SellDecision,
   StrategyParameters
 } from "./types.js";
+import { MARKET_CANDLE_INTERVAL_MS } from "./market.js";
+
+const MAX_CLOSED_CANDLE_AGE_MS = MARKET_CANDLE_INTERVAL_MS * 2;
 
 export function evaluateBuy(
   market: MarketPoint,
@@ -22,9 +25,9 @@ export function evaluateBuy(
   const lastThree = recentCandles.slice(-3);
   if (lastThree.length < 3) blockers.push("INSUFFICIENT_CANDLES");
   else {
-    const hasGap = lastThree.some((candle, index) => index > 0 && candle.timestamp.getTime() - lastThree[index - 1]!.timestamp.getTime() !== 60_000);
+    const hasGap = lastThree.some((candle, index) => index > 0 && candle.timestamp.getTime() - lastThree[index - 1]!.timestamp.getTime() !== MARKET_CANDLE_INTERVAL_MS);
     const latestAgeMs = market.timestamp.getTime() - lastThree[2]!.timestamp.getTime();
-    if (hasGap || latestAgeMs < 0 || latestAgeMs > 120_000) blockers.push("NON_CONSECUTIVE_CANDLES");
+    if (hasGap || latestAgeMs < 0 || latestAgeMs > MAX_CLOSED_CANDLE_AGE_MS) blockers.push("NON_CONSECUTIVE_CANDLES");
     if (lastThree.some((candle) => candle.open > 0 && ((candle.open - candle.close) / candle.open) * 100 > params.maxSingleCandleDropPercent)) {
       blockers.push("SHARP_CANDLE_DROP");
     }
@@ -59,7 +62,9 @@ export function evaluateSell(
 
   if (market.fdvUsd < params.minFdvUsd) return decision("SELL_FDV_BREAK", highestPriceUsd);
   if (market.liquidityUsd < params.minLiquidityUsd) return decision("SELL_LP_BREAK", highestPriceUsd);
-  if (profitPercent <= -params.emergencyStopLossPercent) return decision("SELL_EMERGENCY_STOP", highestPriceUsd);
+  if (params.emergencyStopLossPercent > 0 && profitPercent <= -params.emergencyStopLossPercent) {
+    return decision("SELL_EMERGENCY_STOP", highestPriceUsd);
+  }
 
   const activateTrailing = position.trailingActivated || profitPercent >= params.trailingActivateProfitPercent;
   const trailingStopPriceUsd = activateTrailing
