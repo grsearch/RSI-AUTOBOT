@@ -17,8 +17,8 @@ const params: StrategyParameters = {
   emergencyStopLossPercent: 45
 };
 
-const market = { timestamp: new Date(180_000), priceUsd: 1, fdvUsd: 40_000, liquidityUsd: 20_000, rsi: 20 };
-const candles = [0, 1, 2].map((offset) => ({ timestamp: new Date(offset * 60_000), open: 1, high: 1, low: 0.99, close: 0.99, volume: 1 }));
+const market = { timestamp: new Date(900_000), priceUsd: 1, fdvUsd: 40_000, liquidityUsd: 20_000, rsi: 20 };
+const candles = [0, 1, 2].map((offset) => ({ timestamp: new Date(offset * 300_000), open: 1, high: 1, low: 0.99, close: 0.99, volume: 1 }));
 
 describe("strategy decisions", () => {
   it("allows an oversold buy with stable liquidity", () => {
@@ -30,8 +30,8 @@ describe("strategy decisions", () => {
     expect(evaluateBuy(market, risky, 21_000, params).blockers).toContain("SHARP_CANDLE_DROP");
   });
 
-  it("blocks a buy when one-minute candles contain a gap", () => {
-    const gapped = [candles[0]!, candles[1]!, { ...candles[2]!, timestamp: new Date(180_000) }];
+  it("blocks a buy when five-minute candles contain a gap", () => {
+    const gapped = [candles[0]!, candles[1]!, { ...candles[2]!, timestamp: new Date(900_000) }];
     expect(evaluateBuy(market, gapped, 21_000, params).blockers).toContain("NON_CONSECUTIVE_CANDLES");
   });
 
@@ -44,5 +44,11 @@ describe("strategy decisions", () => {
   it("uses the emergency loss guard before RSI", () => {
     const position = { averageEntryPriceUsd: 1, initialEntryPriceUsd: 1, highestPriceUsd: 1, trailingActivated: false, addPositionCount: 0 };
     expect(evaluateSell({ ...market, priceUsd: 0.5 }, 20, position, params).reason).toBe("SELL_EMERGENCY_STOP");
+  });
+
+  it("disables the fixed emergency stop when configured as zero", () => {
+    const position = { averageEntryPriceUsd: 1, initialEntryPriceUsd: 1, highestPriceUsd: 1, trailingActivated: false, addPositionCount: 0 };
+    const result = evaluateSell({ ...market, priceUsd: 0.5, rsi: 20 }, 20, position, { ...params, emergencyStopLossPercent: 0 });
+    expect(result.shouldSell).toBe(false);
   });
 });

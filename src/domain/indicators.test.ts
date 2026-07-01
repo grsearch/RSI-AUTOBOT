@@ -11,4 +11,15 @@ describe("calculateRsi", () => {
     const rsi = calculateRsi(Array(8).fill(1), 7);
     expect(rsi[7]).toBe(50);
   });
+
+  it("does not lower Wilder RSI merely because later candles are flat", () => {
+    const rsi = calculateRsi([1, 2, 1, 2, 2, 2], 3);
+    expect(rsi[4]).toBeCloseTo(rsi[3]!, 10);
+    expect(rsi[5]).toBeCloseTo(rsi[3]!, 10);
+  });
+
+  it("preserves genuine moves smaller than half a percent", () => {
+    const rsi = calculateRsi([1, 1.001, 1.002, 1.003, 1.004, 1.005, 1.006, 1.007], 7);
+    expect(rsi[7]).toBe(100);
+  });
 });

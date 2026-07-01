@@ -3,12 +3,13 @@ import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "rec
 import { sol } from "../api";
 import { ErrorNotice, Metric, PageHeader } from "../components";
 import { useApi } from "../hooks";
-import type { Overview, Position } from "../types";
+import type { Overview, PageResponse, Position } from "../types";
 
 export function OverviewPage() {
   const { data, error } = useApi<Overview>("/api/overview", 10_000);
-  const positions = useApi<Position[]>("/api/positions", 20_000);
-  const closed = (positions.data ?? []).filter((item) => item.status === "CLOSED").slice(0, 30).reverse();
+  const positions = useApi<PageResponse<"positions", Position> | Position[]>("/api/positions?status=CLOSED&page=1&pageSize=30", 20_000);
+  const positionRows = Array.isArray(positions.data) ? positions.data : positions.data?.positions ?? [];
+  const closed = positionRows.filter((item) => item.status === "CLOSED").slice(0, 30).reverse();
   let running = 0;
   const chart = closed.map((item) => ({ date: new Date(item.exitTime!).toLocaleDateString("zh-CN", { month: "numeric", day: "numeric" }), pnl: running += Number(item.netPnlSol ?? 0) }));
   const healthy = data?.health?.schedulerRunning && data.health.birdeyeOk;
@@ -24,7 +25,7 @@ export function OverviewPage() {
     <div className="dashboard-grid">
       <div className="card chart-card">
         <div className="card-title"><div><span>累计表现</span><h2>已实现盈亏曲线</h2></div><CircleDollarSign /></div>
-        {chart.length ? <ResponsiveContainer width="100%" height={280}><AreaChart data={chart}><defs><linearGradient id="pnl" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#63e6be" stopOpacity={0.35}/><stop offset="100%" stopColor="#63e6be" stopOpacity={0}/></linearGradient></defs><XAxis dataKey="date" axisLine={false} tickLine={false} /><YAxis axisLine={false} tickLine={false} width={48}/><Tooltip contentStyle={{ background: "#10241c", border: "1px solid #28483a", borderRadius: 12 }}/><Area type="monotone" dataKey="pnl" stroke="#63e6be" fill="url(#pnl)" strokeWidth={2}/></AreaChart></ResponsiveContainer> : <div className="chart-placeholder">完成第一笔纸上交易后，这里会出现盈亏曲线。</div>}
+        {chart.length ? <ResponsiveContainer width="100%" height={280}><AreaChart data={chart}><defs><linearGradient id="pnl" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#63e6be" stopOpacity={0.35}/><stop offset="100%" stopColor="#63e6be" stopOpacity={0}/></linearGradient></defs><XAxis dataKey="date" axisLine={false} tickLine={false} /><YAxis axisLine={false} tickLine={false} width={48}/><Tooltip contentStyle={{ background: "#10241c", border: "1px solid #28483a", borderRadius: 12 }}/><Area type="monotone" dataKey="pnl" stroke="#63e6be" fill="url(#pnl)" strokeWidth={2}/></AreaChart></ResponsiveContainer> : <div className="chart-placeholder">完成第一笔实盘交易后，这里会出现盈亏曲线。</div>}
       </div>
       <div className="card health-card">
         <div className="card-title"><div><span>服务探针</span><h2>系统健康</h2></div><ShieldCheck /></div>

@@ -91,6 +91,12 @@ export class Scheduler {
 }
 
 async function recoverTransientStates(): Promise<void> {
+  const reactivated = await prisma.token.updateMany({
+    where: { status: "CLOSED", positions: { none: { status: "OPEN" } } },
+    data: { status: "WATCHING", removedAt: null, removeReason: null }
+  });
+  if (reactivated.count > 0) logger.info({ event: "closed_tokens_reactivated", count: reactivated.count });
+
   const transient = await prisma.token.findMany({
     where: { status: { in: ["BUYING", "SELLING"] } },
     include: { positions: { where: { status: "OPEN" }, take: 1 }, trades: { where: { status: "PENDING" }, take: 1 } }

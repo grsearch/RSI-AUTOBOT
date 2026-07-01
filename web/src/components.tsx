@@ -1,4 +1,6 @@
+import { ChevronFirst, ChevronLast, ChevronLeft, ChevronRight } from "lucide-react";
 import type { ReactNode } from "react";
+import type { Pagination } from "./types";
 
 export function PageHeader({ eyebrow, title, description, action }: { eyebrow: string; title: string; description: string; action?: ReactNode }) {
   return <div className="page-header"><div><span className="eyebrow">{eyebrow}</span><h1>{title}</h1><p>{description}</p></div>{action}</div>;
@@ -19,4 +21,17 @@ export function Empty({ children = "这里还没有数据。" }: { children?: Re
 
 export function ErrorNotice({ error }: { error: unknown }) {
   return <div className="notice error">{error instanceof Error ? error.message : String(error)}</div>;
+}
+
+export function PaginationBar({ pagination, onPage }: { pagination: Pagination; onPage: (page: number) => void }) {
+  const { page, total, totalPages } = pagination;
+  return <div className="pagination-bar">
+    <span>第 {page}/{totalPages} 页 · 共 {total} 条</span>
+    <div>
+      <button onClick={() => onPage(1)} disabled={page <= 1} aria-label="第一页"><ChevronFirst size={16} /></button>
+      <button onClick={() => onPage(page - 1)} disabled={page <= 1} aria-label="上一页"><ChevronLeft size={16} /></button>
+      <button onClick={() => onPage(page + 1)} disabled={page >= totalPages} aria-label="下一页"><ChevronRight size={16} /></button>
+      <button onClick={() => onPage(totalPages)} disabled={page >= totalPages} aria-label="最后一页"><ChevronLast size={16} /></button>
+    </div>
+  </div>;
 }

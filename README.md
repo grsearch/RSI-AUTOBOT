@@ -1,14 +1,14 @@
 # HELM · SOL RSI 自动交易机器人
 
-一个面向 Solana 新币的纯实盘自动交易服务：接收代币 Webhook、保存 Birdeye 逐分钟行情、运行 RSI(7) 策略、真实链上成交、持仓恢复、回测、中文 Dashboard 与 systemd/Docker 部署。
+一个面向 Solana 新币的纯实盘自动交易服务：接收代币 Webhook、保存 Birdeye 5 分钟行情、运行 RSI(7) 策略、真实链上成交、持仓恢复、回测、中文 Dashboard 与 systemd/Docker 部署。
 
 ## 这版对原方案做了哪些修正
 
 1. **成交改用 Jupiter Swap V2 Meta-Aggregator。** Pump 新币可能仍在发射曲线，也可能已迁移到 PumpSwap；固定绑定 PumpSwap SDK 会出现“有流动性却无法成交”的盲区。Jupiter 会在当前可用路由间择优，执行前仍做买卖双向可成交检查。
 2. **统一用 USD/Token 做策略判断。** 原方案把实际 `SOL/Token` 成本与 Birdeye `USD/Token` 价格直接比较，补仓和盈亏会算错。本实现用成交时 SOL/USD 换算实际 USD 成本；最终已实现盈亏仍按 SOL 结算。
-3. **采用纯实盘执行。** 不包含 Paper 分支，也不设置每日亏损熔断、最大并发持仓或单币敞口限制。保留钱包手续费余额、铸币/冻结权限拦截、往返报价损耗上限和策略紧急止损。
+3. **采用纯实盘执行。** 不包含 Paper 分支，也不设置每日亏损熔断、最大并发持仓或单币敞口限制。保留钱包手续费余额、铸币/冻结权限拦截、往返报价损耗上限；固定紧急止损可配置，默认关闭。
 4. **不盲目重发未知交易。** 实盘请求超时可能已经上链。机器人会留下 `PENDING/ERROR` 供人工核对，避免自动重试造成重复买入。
-5. **只用已收盘 K 线计算 RSI。** 当前分钟的半根 K 线会持续变化，不参与信号判断。
+5. **只用已收盘的 5 分钟 K 线计算 RSI。** 当前 5 分钟周期的半根 K 线会持续变化，不参与信号判断；Birdeye V3 请求显式关闭 padding 和 outlier，并用至少 100 根 K 线暖机 Wilder RSI。不会按“波动小于 0.5%”删除 K 线，因为波幅无法证明一根 K 线是伪造数据。
 6. **历史 FDV/LP 不回填污染。** 已保存 K 线的市场快照不会被后续轮询覆盖，回测不会偷看未来。
 
 ## 主要功能
@@ -88,7 +88,8 @@ JUPITER_API_PLAN=paid
 - Dashboard 的“暂停新买入”会阻止首买和补仓，但**不会停止已有持仓的安全卖出**。
 - 不设置每日亏损熔断、最大持仓数或单币投入上限。
 - `MAX_PRICE_IMPACT_PERCENT` 实际限制的是完整“买入再卖出”的报价损耗，比单一 price-impact 字段更保守。
-- FDV/LP 跌破、紧急止损、移动止盈、RSI 的卖出优先级依次执行。
+- FDV/LP 跌破、可选紧急止损、移动止盈、RSI 的卖出优先级依次执行；`EMERGENCY_STOP_LOSS_PERCENT=0` 表示关闭固定止损。
+- 普通平仓后代币自动回到 `WATCHING`，仍会继续寻找下一次入场；FDV/LP 安全退出仍会移除代币。
 - 实盘手动卖出 API 还要求 `x-confirm-live: SELL <mint>`，防止误触。
 - 每次 Jupiter 广播前都会保存 `requestId`、签名交易和可预计算哈希；异常重启后 Token 进入 `ERROR`，不会盲目重发。
 - `POST /api/tokens/:address/reconcile` 会读取钱包真实余额；数据库余额不一致时必须提供已确认的 `txHash`，再恢复买入、补仓或卖出记录。
@@ -97,12 +98,12 @@ JUPITER_API_PLAN=paid
 
 除 `/healthz` 和 Webhook 外，所有 `/api/*` 都受 HTTP Basic Auth 保护。
 
-- `GET/POST /api/tokens`
+- `GET/POST /api/tokens`（GET 支持 `page`、`pageSize`）
 - `DELETE /api/tokens/:address`
 - `POST /api/tokens/:address/force-sell`
 - `POST /api/tokens/:address/reconcile`（仅用于人工核对未知实盘结果后解除 `ERROR`）
-- `GET /api/positions`
-- `GET /api/trades`
+- `GET /api/positions`（支持 `page`、`pageSize`、可选 `status`）
+- `GET /api/trades`（支持 `page`、`pageSize`）
 - `GET /api/overview`
 - `GET /api/pnl/today`
 - `GET /api/pnl/month`
@@ -140,6 +141,12 @@ journalctl -u sol-rsi-bot -f
 ```
 
 Nginx 示例强制 HTTPS，并假设证书位于 `/etc/letsencrypt/live/bot.example.com/`。先替换域名并使用 Certbot 申请证书，Basic Auth 不得通过明文 HTTP 暴露。
+
+可由 root 每 5 分钟运行健康检查；连续 3 次失败后才重启服务：
+
+```cron
+*/5 * * * * /opt/sol-rsi-bot/scripts/healthcheck.sh
+```
 
 每天 03:00 备份可加入 solbot 用户的 crontab：
 

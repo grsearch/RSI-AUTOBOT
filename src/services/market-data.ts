@@ -3,6 +3,7 @@ import { Prisma } from "@prisma/client";
 import { config } from "../config.js";
 import { prisma } from "../db.js";
 import { attachRsi } from "../domain/indicators.js";
+import { MARKET_CANDLE_INTERVAL_MS, MARKET_CANDLE_TIMEFRAME } from "../domain/market.js";
 import type { Candle, MarketPoint } from "../domain/types.js";
 import { logger } from "../logger.js";
 import { fetchJson } from "./http.js";
@@ -10,6 +11,8 @@ import { fetchJson } from "./http.js";
 type BirdeyeEnvelope<T> = { success?: boolean; data: T };
 type OverviewPayload = Record<string, unknown>;
 type OhlcvPayload = { items?: Array<Record<string, unknown>> } | Array<Record<string, unknown>>;
+const MIN_RSI_HISTORY_CANDLES = 100;
+const RSI_HISTORY_MULTIPLIER = 15;
 
 export class MarketDataService {
   private solPriceCache: { value: number; expiresAt: number } | null = null;
@@ -31,7 +34,7 @@ export class MarketDataService {
     }
 
     const decimals = optionalNumber(overview, ["decimals"]);
-    const closedCandles = candles.filter((candle) => candle.timestamp.getTime() < floorMinute(Date.now()));
+    const closedCandles = candles.filter((candle) => candle.timestamp.getTime() < floor5Minutes(Date.now()));
     const withRsi = attachRsi(closedCandles, config.RSI_PERIOD);
     const latestClosedAt = withRsi.at(-1)?.timestamp.getTime();
     const latestRsi = withRsi.at(-1)?.rsi ?? null;
@@ -95,7 +98,16 @@ export class MarketDataService {
       });
     });
 
-    logger.info({ event: "market_data_updated", address: token.address, priceUsd, fdvUsd, liquidityUsd, rsi: latestRsi });
+    logger.info({
+      event: "market_data_updated",
+      address: token.address,
+      priceUsd,
+      fdvUsd,
+      liquidityUsd,
+      rsi: latestRsi,
+      rsiCandleCount: withRsi.length,
+      candleTimeframe: MARKET_CANDLE_TIMEFRAME
+    });
     return { timestamp: now, priceUsd, priceSol, fdvUsd, liquidityUsd, ageMinutes, rsi: latestRsi };
   }
 
@@ -113,7 +125,7 @@ export class MarketDataService {
   private async getOverview(address: string): Promise<OverviewPayload> {
     const url = new URL("/defi/token_overview", config.BIRDEYE_BASE_URL);
     url.searchParams.set("address", address);
-    url.searchParams.set("frames", "1m");
+    url.searchParams.set("frames", MARKET_CANDLE_TIMEFRAME);
     url.searchParams.set("ui_amount_mode", "scaled");
     const response = await this.request<BirdeyeEnvelope<OverviewPayload>>(url);
     return response.data;
@@ -121,18 +133,25 @@ export class MarketDataService {
 
   private async getOhlcv(address: string): Promise<Candle[]> {
     const nowSeconds = Math.floor(Date.now() / 1000);
-    const url = new URL("/defi/ohlcv", config.BIRDEYE_BASE_URL);
+    const historyCandleCount = Math.min(5000, Math.max(MIN_RSI_HISTORY_CANDLES, config.RSI_PERIOD * RSI_HISTORY_MULTIPLIER));
+    const url = new URL("/defi/v3/ohlcv", config.BIRDEYE_BASE_URL);
     url.searchParams.set("address", address);
-    url.searchParams.set("type", "1m");
+    url.searchParams.set("type", MARKET_CANDLE_TIMEFRAME);
     url.searchParams.set("currency", "usd");
-    url.searchParams.set("time_from", String(nowSeconds - 60 * Math.max(60, config.RSI_PERIOD * 5)));
     url.searchParams.set("time_to", String(nowSeconds));
+    url.searchParams.set("mode", "count");
+    url.searchParams.set("count_limit", String(historyCandleCount));
+    url.searchParams.set("ui_amount_mode", "scaled");
+    url.searchParams.set("padding", "false");
+    url.searchParams.set("outlier", "false");
     const response = await this.request<BirdeyeEnvelope<OhlcvPayload>>(url);
     const items = Array.isArray(response.data) ? response.data : response.data.items ?? [];
-    return items
-      .map(parseCandle)
-      .filter((candle): candle is Candle => candle != null)
-      .sort((left, right) => left.timestamp.getTime() - right.timestamp.getTime());
+    const candlesByTimestamp = new Map<number, Candle>();
+    for (const item of items) {
+      const candle = parseCandle(item);
+      if (candle) candlesByTimestamp.set(candle.timestamp.getTime(), candle);
+    }
+    return [...candlesByTimestamp.values()].sort((left, right) => left.timestamp.getTime() - right.timestamp.getTime());
   }
 
   private async getCreationTime(address: string): Promise<Date | null> {
@@ -158,7 +177,7 @@ function candleRecord(tokenId: string, address: string, candle: Candle, fdvUsd: 
     tokenId,
     address,
     timestamp: candle.timestamp,
-    timeframe: "1m",
+    timeframe: MARKET_CANDLE_TIMEFRAME,
     open: candle.open,
     high: candle.high,
     low: candle.low,
@@ -178,10 +197,11 @@ function parseCandle(raw: Record<string, unknown>): Candle | null {
   const high = optionalNumber(raw, ["h", "high"]);
   const low = optionalNumber(raw, ["l", "low"]);
   const close = optionalNumber(raw, ["c", "close"]);
-  const volume = optionalNumber(raw, ["v", "volume"]) ?? 0;
+  const volume = optionalNumber(raw, ["v", "volume", "v_usd"]) ?? 0;
   if (seconds == null || open == null || high == null || low == null || close == null) return null;
   const timestamp = new Date(seconds > 10_000_000_000 ? seconds : seconds * 1000);
-  if (!Number.isFinite(timestamp.getTime()) || open <= 0 || close <= 0) return null;
+  const malformedRange = low <= 0 || high <= 0 || low > Math.min(open, close) || high < Math.max(open, close) || high < low;
+  if (!Number.isFinite(timestamp.getTime()) || open <= 0 || close <= 0 || malformedRange || volume < 0) return null;
   return { timestamp, open, high, low, close, volume };
 }
 
@@ -198,8 +218,8 @@ function optionalNumber(source: Record<string, unknown>, keys: string[]): number
   return null;
 }
 
-function floorMinute(timestamp: number): number {
-  return Math.floor(timestamp / 60_000) * 60_000;
+function floor5Minutes(timestamp: number): number {
+  return Math.floor(timestamp / MARKET_CANDLE_INTERVAL_MS) * MARKET_CANDLE_INTERVAL_MS;
 }
 
 function errorMessage(error: unknown): string {

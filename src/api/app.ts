@@ -41,7 +41,7 @@ const backtestInput = z.object({
     maxAddPositionCount: z.number().int().min(0).max(10).optional(),
     trailingActivateProfitPercent: z.number().min(0).max(1000).optional(),
     trailingDrawdownPercent: z.number().min(0.1).max(100).optional(),
-    emergencyStopLossPercent: z.number().min(1).max(100).optional(),
+    emergencyStopLossPercent: z.number().min(0).max(100).optional(),
     slippagePercent: z.number().min(0).max(20).optional(),
     buyFeeSol: z.number().min(0).max(0.1).optional(),
     sellFeeSol: z.number().min(0).max(0.1).optional()
@@ -97,18 +97,25 @@ export function createApp(dependencies: AppDependencies = {}) {
     response.json({ watchingCount, openPositions, totalTrades, todayPnlSol: todayPnl, monthPnlSol: monthPnl, health });
   }));
 
-  app.get("/api/tokens", asyncRoute(async (_request, response) => {
-    const tokens = await prisma.token.findMany({
-      orderBy: { createdAt: "desc" },
-      include: { positions: { where: { status: "OPEN" }, take: 1, orderBy: { createdAt: "desc" } } }
-    });
-    response.json(tokens.map((token) => {
+  app.get("/api/tokens", asyncRoute(async (request, response) => {
+    const page = paginationParams(request.query);
+    const [tokens, total] = await prisma.$transaction([
+      prisma.token.findMany({
+        orderBy: { createdAt: "desc" },
+        include: { positions: { where: { status: "OPEN" }, take: 1, orderBy: { createdAt: "desc" } } },
+        skip: page.skip,
+        take: page.pageSize
+      }),
+      prisma.token.count()
+    ]);
+    const items = tokens.map((token) => {
       const position = token.positions[0];
       const pnlPercent = position && token.priceUsd
         ? ((Number(token.priceUsd) - Number(position.averageEntryPriceUsd)) / Number(position.averageEntryPriceUsd)) * 100
         : null;
       return { ...token, currentPnlPercent: pnlPercent };
-    }));
+    });
+    response.json({ tokens: items, pagination: paginationMeta(page, total) });
   }));
 
   app.post("/api/tokens", asyncRoute(async (request, response) => {
@@ -152,14 +159,31 @@ export function createApp(dependencies: AppDependencies = {}) {
     response.json(result);
   }));
 
-  app.get("/api/positions", asyncRoute(async (_request, response) => {
-    response.json(await prisma.position.findMany({ include: { token: true }, orderBy: { createdAt: "desc" }, take: 500 }));
+  app.get("/api/positions", asyncRoute(async (request, response) => {
+    const page = paginationParams(request.query);
+    const status = z.enum(["OPEN", "CLOSED", "ERROR"]).optional().parse(singleQueryValue(request.query.status));
+    const where = status ? { status } : {};
+    const [positions, total] = await prisma.$transaction([
+      prisma.position.findMany({
+        where,
+        include: { token: true },
+        orderBy: [{ status: "asc" }, { createdAt: "desc" }],
+        skip: page.skip,
+        take: page.pageSize
+      }),
+      prisma.position.count({ where })
+    ]);
+    response.json({ positions, pagination: paginationMeta(page, total) });
   }));
 
   app.get("/api/trades", asyncRoute(async (request, response) => {
-    const take = Math.min(1000, Math.max(1, Number(request.query.limit) || 200));
-    const trades = await prisma.trade.findMany({ include: { token: true }, orderBy: { createdAt: "desc" }, take });
-    response.json(trades.map(({ signedTransaction: _signedTransaction, ...trade }) => trade));
+    const page = paginationParams(request.query, request.query.limit);
+    const [trades, total] = await prisma.$transaction([
+      prisma.trade.findMany({ include: { token: true }, orderBy: { createdAt: "desc" }, skip: page.skip, take: page.pageSize }),
+      prisma.trade.count()
+    ]);
+    const items = trades.map(({ signedTransaction: _signedTransaction, ...trade }) => trade);
+    response.json({ trades: items, pagination: paginationMeta(page, total) });
   }));
 
   app.get("/api/pnl/today", asyncRoute(async (_request, response) => response.json({ pnlSol: await pnlSince(startOfShanghaiDay()) })));
@@ -262,6 +286,30 @@ function parseAddress(value: string | string[] | undefined): string {
 function paramValue(value: string | string[] | undefined, error: string): string {
   if (!value || Array.isArray(value)) throw httpError(400, error);
   return value;
+}
+
+function singleQueryValue(value: unknown): unknown {
+  return Array.isArray(value) ? value[0] : value;
+}
+
+function paginationParams(query: Request["query"], legacyLimit?: unknown) {
+  const parsed = z.object({
+    page: z.coerce.number().int().min(1).max(1_000_000).default(1),
+    pageSize: z.coerce.number().int().min(1).max(100).default(30)
+  }).parse({
+    page: singleQueryValue(query.page),
+    pageSize: singleQueryValue(query.pageSize) ?? singleQueryValue(legacyLimit)
+  });
+  return { ...parsed, skip: (parsed.page - 1) * parsed.pageSize };
+}
+
+function paginationMeta(page: ReturnType<typeof paginationParams>, total: number) {
+  return {
+    page: page.page,
+    pageSize: page.pageSize,
+    total,
+    totalPages: Math.max(1, Math.ceil(total / page.pageSize))
+  };
 }
 
 function isSolanaAddress(value: string): boolean {

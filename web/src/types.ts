@@ -5,3 +5,5 @@ export type Position = { id: string; status: string; entryTime: string; exitTime
 export type Trade = { id: string; side: string; status: string; batchNumber?: number; txHash?: string; amountSol: string; amountToken: string; priceUsd: string; feeSol: string; fdvAtTradeUsd?: string; liquidityAtTradeUsd?: string; rsiAtTrade?: string; reason: string; errorMessage?: string; createdAt: string; token: Token };
 export type SettingsData = Record<string, string | number | boolean | string[]> & { tradingMode: "live"; tradingPaused?: boolean };
 export type BacktestRun = { id: string; name: string; address: string; summaryJson: Record<string, number | boolean>; createdAt: string; trades?: Array<Record<string, string | number | boolean>> };
+export type Pagination = { page: number; pageSize: number; total: number; totalPages: number };
+export type PageResponse<Key extends string, Item> = Record<Key, Item[]> & { pagination: Pagination };
