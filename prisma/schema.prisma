@@ -45,6 +45,7 @@ model Token {
   status                TokenStatus      @default(WATCHING)
   fdvUsd                Decimal?         @db.Decimal(30, 10)
   liquidityUsd          Decimal?         @db.Decimal(30, 10)
+  volume24hUsd          Decimal?         @db.Decimal(30, 10)
   ageMinutes            Decimal?         @db.Decimal(30, 4)
   priceUsd              Decimal?         @db.Decimal(40, 20)
   priceSol              Decimal?         @db.Decimal(40, 20)
