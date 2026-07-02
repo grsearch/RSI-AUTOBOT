@@ -24,6 +24,6 @@ export function SettingsPage() {
 }
 
 function label(key: string): string {
-  const map: Record<string, string> = { buyAmountSol: "首买 SOL", addPositionAmountSol: "补仓 SOL", slippagePercent: "最大滑点 %", minFdvUsd: "最低 FDV (USD)", minLiquidityUsd: "最低流动性 (USD)", rsiPeriod: "RSI 周期", rsiBuyBelow: "RSI 买入阈值", trailingActivateProfitPercent: "移动止盈激活 %", trailingDrawdownPercent: "最高价回撤 %", emergencyStopLossPercent: "紧急止损 %（0=关闭）" };
+  const map: Record<string, string> = { buyAmountSol: "首买 SOL", addPositionAmountSol: "补仓 SOL", slippagePercent: "最大滑点 %", minFdvUsd: "最低 FDV (USD)", minLiquidityUsd: "最低流动性 (USD)", minVolume24hUsd: "最低 24h 成交量 (USD)", rsiPeriod: "RSI 周期", rsiBuyBelow: "RSI 买入阈值", rsiSellCrossDown: "RSI 死叉线（99=关闭）", rsiSellAbove: "RSI 高位卖出", trailingActivateProfitPercent: "移动止盈激活 %", trailingDrawdownPercent: "最高价回撤 %", emergencyStopLossPercent: "紧急止损 %（0=关闭）" };
   return map[key] ?? key;
 }
