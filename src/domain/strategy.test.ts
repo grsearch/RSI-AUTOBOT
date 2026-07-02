@@ -5,14 +5,14 @@ import type { StrategyParameters } from "./types.js";
 const params: StrategyParameters = {
   minFdvUsd: 30_000,
   minLiquidityUsd: 10_000,
-  rsiBuyBelow: 30,
-  rsiSellCrossDown: 70,
+  rsiBuyBelow: 25,
+  rsiSellCrossDown: 99,
   rsiSellAbove: 80,
   maxSingleCandleDropPercent: 3,
   lpDropThresholdPercent: 10,
   addPositionDropPercent: 30,
   maxAddPositionCount: 1,
-  trailingActivateProfitPercent: 20,
+  trailingActivateProfitPercent: 30,
   trailingDrawdownPercent: 10,
   emergencyStopLossPercent: 45
 };
@@ -49,6 +49,17 @@ describe("strategy decisions", () => {
   it("disables the fixed emergency stop when configured as zero", () => {
     const position = { averageEntryPriceUsd: 1, initialEntryPriceUsd: 1, highestPriceUsd: 1, trailingActivated: false, addPositionCount: 0 };
     const result = evaluateSell({ ...market, priceUsd: 0.5, rsi: 20 }, 20, position, { ...params, emergencyStopLossPercent: 0 });
+    expect(result.shouldSell).toBe(false);
+  });
+
+  it("treats a cross-down threshold of 99 as disabled", () => {
+    const position = { averageEntryPriceUsd: 1, initialEntryPriceUsd: 1, highestPriceUsd: 1, trailingActivated: false, addPositionCount: 0 };
+    const result = evaluateSell(
+      { ...market, rsi: 70 },
+      100,
+      position,
+      { ...params, rsiSellAbove: 100 }
+    );
     expect(result.shouldSell).toBe(false);
   });
 });

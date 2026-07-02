@@ -80,7 +80,8 @@ export function evaluateSell(
   }
 
   if (!activateTrailing && market.rsi != null) {
-    if (previousRsi != null && previousRsi >= params.rsiSellCrossDown && market.rsi < params.rsiSellCrossDown) {
+    const crossDownEnabled = params.rsiSellCrossDown < 99;
+    if (crossDownEnabled && previousRsi != null && previousRsi >= params.rsiSellCrossDown && market.rsi < params.rsiSellCrossDown) {
       return decision("SELL_RSI_CROSS_DOWN_70", highestPriceUsd);
     }
     if (market.rsi > params.rsiSellAbove) return decision("SELL_RSI_ABOVE_80", highestPriceUsd);

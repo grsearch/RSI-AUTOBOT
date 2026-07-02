@@ -60,6 +60,16 @@ WALLET_PRIVATE_KEY=base58_secret_key_or_json_byte_array
 
 Jupiter 请求固定携带 `x-api-key`，不使用 keyless 或免费回退接口。`JUPITER_API_PLAN=paid` 是启动时的显式配置检查；实际订阅等级由 Jupiter Portal 中该 API Key 的计费套餐决定。
 
+## Birdeye 调用优化
+
+- 价格、FDV、流动性通过 Multiple Market Data 接口按每批 20 个代币获取；批量接口失败或缺少单币数据时才回退 `token_overview`。
+- OHLCV 最多在每根新的 5 分钟 K 线收盘后请求一次，不再跟随 3 分钟市场轮询重复拉取同一根 K 线。
+- 已有足够历史后，每次 OHLCV 只补最近约 `RSI_PERIOD + 3` 根，并与数据库历史合并计算 RSI；新代币首次仍拉取完整暖机历史。
+- SOL/USD 请求合并并缓存 5 分钟；获取不到创建时间的代币 6 小时后才重试。
+- 24 小时成交量退出条件直接复用批量市场数据，每小时检查一次，不增加 Birdeye 请求。
+
+以 100 个监控代币估算，基础 REST 请求量由约 96,000 次/天下降到约 31,500 次/天，并显著减少 OHLCV 返回数据量。实际消耗会受新币数量、失败降级和服务重启次数影响。
+
 ## Webhook 示例
 
 ```bash
@@ -90,6 +100,7 @@ JUPITER_API_PLAN=paid
 - `MAX_PRICE_IMPACT_PERCENT` 实际限制的是完整“买入再卖出”的报价损耗，比单一 price-impact 字段更保守。
 - FDV/LP 跌破、可选紧急止损、移动止盈、RSI 的卖出优先级依次执行；`EMERGENCY_STOP_LOSS_PERCENT=0` 表示关闭固定止损。
 - 普通平仓后代币自动回到 `WATCHING`，仍会继续寻找下一次入场；FDV/LP 安全退出仍会移除代币。
+- `MIN_VOLUME_24H_USD` 默认 10,000 USD。低于阈值且没有持仓时移出监控；存在开放持仓时只记录延迟退出，继续行情更新和卖出管理，平仓后等待下一次低频检查。
 - 实盘手动卖出 API 还要求 `x-confirm-live: SELL <mint>`，防止误触。
 - 每次 Jupiter 广播前都会保存 `requestId`、签名交易和可预计算哈希；异常重启后 Token 进入 `ERROR`，不会盲目重发。
 - `POST /api/tokens/:address/reconcile` 会读取钱包真实余额；数据库余额不一致时必须提供已确认的 `txHash`，再恢复买入、补仓或卖出记录。

@@ -1,9 +1,10 @@
 import pLimit from "p-limit";
 import { config } from "../config.js";
 import { prisma } from "../db.js";
+import { evaluateVolumeExit } from "../domain/market-filter.js";
 import { logger } from "../logger.js";
 import { HealthService } from "./health.js";
-import { MarketDataService } from "./market-data.js";
+import { marketVolume24hUsd, MarketDataService } from "./market-data.js";
 import { StrategyEngine } from "./strategy-engine.js";
 
 export class Scheduler {
@@ -12,6 +13,7 @@ export class Scheduler {
   private marketRunning = false;
   private strategyRunning = false;
   private lastCleanupAt = 0;
+  private lastVolumeFilterAt = 0;
   private readonly market = new MarketDataService();
   private readonly strategy = new StrategyEngine();
   private readonly health = new HealthService();
@@ -39,8 +41,48 @@ export class Scheduler {
     this.marketRunning = true;
     const limit = pLimit(config.MARKET_REQUEST_CONCURRENCY);
     try {
-      const tokens = await prisma.token.findMany({ where: { status: { in: ["WATCHING", "HOLDING"] } } });
-      const results = await Promise.allSettled(tokens.map((token) => limit(() => this.market.refreshToken(token))));
+      const tokens = await prisma.token.findMany({
+        where: { status: { in: ["WATCHING", "HOLDING"] } },
+        include: { positions: { where: { status: "OPEN" }, select: { id: true }, take: 1 } }
+      });
+      const marketData = await this.market.getMarketDataMultiple(tokens.map((token) => token.address));
+      let activeTokens = tokens;
+      if (Date.now() - this.lastVolumeFilterAt >= config.VOLUME_FILTER_INTERVAL_MS) {
+        const volumes = new Map<string, number>();
+        for (const [address, market] of marketData) {
+          const volume = marketVolume24hUsd(market);
+          if (volume != null) volumes.set(address, volume);
+        }
+        const decision = evaluateVolumeExit(
+          tokens.map((token) => ({ id: token.id, address: token.address, status: token.status, hasOpenPosition: token.positions.length > 0 })),
+          volumes,
+          config.MIN_VOLUME_24H_USD
+        );
+        const removedIds = new Set<string>();
+        if (decision.remove.length > 0) {
+          const updates = await prisma.$transaction(decision.remove.map((candidate) => prisma.token.updateMany({
+            where: {
+              id: candidate.id,
+              status: { in: ["WATCHING", "HOLDING"] },
+              positions: { none: { status: "OPEN" } }
+            },
+            data: {
+              status: "REMOVED",
+              volume24hUsd: candidate.volume24hUsd,
+              removedAt: new Date(),
+              removeReason: "VOLUME_24H_BELOW_MINIMUM"
+            }
+          })));
+          updates.forEach((result, index) => { if (result.count === 1) removedIds.add(decision.remove[index]!.id); });
+          if (removedIds.size > 0) logger.info({ event: "low_volume_tokens_removed", count: removedIds.size, minimumVolume24hUsd: config.MIN_VOLUME_24H_USD });
+        }
+        if (decision.deferred.length > 0) {
+          logger.info({ event: "low_volume_exit_deferred_for_positions", count: decision.deferred.length, minimumVolume24hUsd: config.MIN_VOLUME_24H_USD });
+        }
+        activeTokens = tokens.filter((token) => !removedIds.has(token.id));
+        this.lastVolumeFilterAt = Date.now();
+      }
+      const results = await Promise.allSettled(activeTokens.map((token) => limit(() => this.market.refreshToken(token, marketData.get(token.address)))));
       const failures = results.filter((result) => result.status === "rejected");
       const probes = await this.health.probe();
       const lastError = failures[0]?.status === "rejected" ? errorMessage(failures[0].reason) : probes.errors[0] ?? null;

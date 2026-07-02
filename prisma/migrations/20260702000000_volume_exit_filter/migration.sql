@@ -1,0 +1,1 @@
+ALTER TABLE "Token" ADD COLUMN "volume24hUsd" DECIMAL(30, 10);
