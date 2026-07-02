@@ -11,9 +11,12 @@ import { fetchJson } from "./http.js";
 type BirdeyeEnvelope<T> = { success?: boolean; data: T };
 type OverviewPayload = Record<string, unknown>;
 type OhlcvPayload = { items?: Array<Record<string, unknown>> } | Array<Record<string, unknown>>;
+type OhlcvHistoryResult = { candles: Candle[]; freshTimestamps: Set<number>; latestFreshAt: Date };
 const MIN_RSI_HISTORY_CANDLES = 100;
 const RSI_HISTORY_MULTIPLIER = 15;
 const MARKET_DATA_BATCH_SIZE = 20;
+const BIRDEYE_V2_OHLCV_MAX_CANDLES = 1000;
+const OHLCV_SOURCE = "birdeye-v2";
 const CREATION_TIME_RETRY_MS = 6 * 60 * 60 * 1000;
 const SOL_PRICE_CACHE_MS = 5 * 60 * 1000;
 const SOL_PRICE_FAILURE_RETRY_MS = 60 * 1000;
@@ -51,7 +54,7 @@ export class MarketDataService {
     const overviewPromise = prefetchedOverview && hasRequiredMarketData(prefetchedOverview)
       ? Promise.resolve(prefetchedOverview)
       : this.getOverview(token.address);
-    const [overview, candles, chainCreatedAt, solPriceUsd] = await Promise.all([
+    const [overview, ohlcv, chainCreatedAt, solPriceUsd] = await Promise.all([
       overviewPromise,
       ohlcvNeeded ? this.getOhlcvWithHistory(token, refreshStartedAt) : Promise.resolve(null),
       this.resolveCreationTime(token),
@@ -67,26 +70,35 @@ export class MarketDataService {
     }
 
     const decimals = optionalNumber(overview, ["decimals"]);
-    const closedCandles = candles?.filter((candle) => candle.timestamp.getTime() < floor5Minutes(refreshStartedAt)) ?? null;
+    const closedBoundary = floor5Minutes(refreshStartedAt);
+    const expectedClosedAt = latestClosedCandleTimestamp(refreshStartedAt);
+    const closedCandles = ohlcv?.candles.filter((candle) => candle.timestamp.getTime() < closedBoundary) ?? null;
     const withRsi = closedCandles ? attachRsi(closedCandles, config.RSI_PERIOD) : null;
+    const refreshedCandles = withRsi?.filter((candle) => ohlcv!.freshTimestamps.has(candle.timestamp.getTime())) ?? [];
     const latestClosedAt = withRsi?.at(-1)?.timestamp.getTime();
-    const hasRefreshedRsi = Boolean(withRsi?.length);
+    const hasRefreshedRsi = refreshedCandles.length > 0;
     const latestRsi = hasRefreshedRsi ? withRsi!.at(-1)?.rsi ?? null : token.rsi == null ? null : Number(token.rsi);
     const now = new Date();
     const ageMinutes = chainCreatedAt ? Math.max(0, (now.getTime() - chainCreatedAt.getTime()) / 60_000) : null;
     const priceSol = solPriceUsd > 0 ? priceUsd / solPriceUsd : null;
 
     await prisma.$transaction(async (tx) => {
-      if (withRsi && withRsi.length > 0) {
+      if (refreshedCandles.length > 0) {
+        await tx.ohlcvCandle.deleteMany({
+          where: {
+            tokenId: token.id,
+            timeframe: MARKET_CANDLE_TIMEFRAME,
+            timestamp: { in: refreshedCandles.map((candle) => candle.timestamp) }
+          }
+        });
         await tx.ohlcvCandle.createMany({
-          skipDuplicates: true,
-          data: withRsi.map((candle) => candleRecord(
+          data: refreshedCandles.map((candle) => candleRecord(
             token.id,
             token.address,
             candle,
-            candle.timestamp.getTime() === latestClosedAt ? fdvUsd : null,
-            candle.timestamp.getTime() === latestClosedAt ? liquidityUsd : null,
-            candle.timestamp.getTime() === latestClosedAt ? ageMinutes : null
+            candle.timestamp.getTime() === latestClosedAt && latestClosedAt === expectedClosedAt ? fdvUsd : null,
+            candle.timestamp.getTime() === latestClosedAt && latestClosedAt === expectedClosedAt ? liquidityUsd : null,
+            candle.timestamp.getTime() === latestClosedAt && latestClosedAt === expectedClosedAt ? ageMinutes : null
           ))
         });
       }
@@ -142,6 +154,9 @@ export class MarketDataService {
       volume24hUsd,
       rsi: latestRsi,
       rsiCandleCount: withRsi?.length ?? 0,
+      ohlcvFreshCandleCount: refreshedCandles.length,
+      ohlcvLatestAt: ohlcv?.latestFreshAt,
+      ohlcvExpectedAt: new Date(expectedClosedAt),
       candleTimeframe: MARKET_CANDLE_TIMEFRAME,
       ohlcvRequested: ohlcvNeeded
     });
@@ -187,10 +202,10 @@ export class MarketDataService {
     return response.data;
   }
 
-  private async getOhlcvWithHistory(token: Token, now: number): Promise<Candle[]> {
+  private async getOhlcvWithHistory(token: Token, now: number): Promise<OhlcvHistoryResult | null> {
     const historyCandleCount = rsiHistoryCandleCount();
     const storedRows = await prisma.ohlcvCandle.findMany({
-      where: { tokenId: token.id, timeframe: MARKET_CANDLE_TIMEFRAME },
+      where: { tokenId: token.id, timeframe: MARKET_CANDLE_TIMEFRAME, source: OHLCV_SOURCE },
       orderBy: { timestamp: "desc" },
       take: historyCandleCount
     });
@@ -202,35 +217,53 @@ export class MarketDataService {
       ? Math.min(historyCandleCount, Math.max(config.RSI_PERIOD + 3, missingCandleCount + 2))
       : historyCandleCount;
     const freshCandles = await this.getOhlcv(token.address, fetchCount, now);
-    const candlesByTimestamp = new Map<number, Candle>();
-    for (const row of storedRows.reverse()) {
-      candlesByTimestamp.set(row.timestamp.getTime(), {
+    if (freshCandles.length === 0) {
+      logger.error({
+        event: "birdeye_ohlcv_empty",
+        address: token.address,
+        endpoint: "/defi/ohlcv",
+        timeframe: MARKET_CANDLE_TIMEFRAME,
+        fetchCount
+      });
+      return null;
+    }
+    const latestFreshAt = freshCandles.at(-1)!.timestamp;
+    const progress = classifyOhlcvProgress(token.lastOhlcvAt, latestFreshAt, latestExpected);
+    if (progress === "no-progress") {
+      logger.error({
+        event: "birdeye_ohlcv_no_progress",
+        address: token.address,
+        previousAt: token.lastOhlcvAt,
+        receivedAt: latestFreshAt,
+        expectedAt: new Date(latestExpected)
+      });
+      return null;
+    }
+    if (progress === "catching-up") {
+      logger.warn({
+        event: "birdeye_ohlcv_catching_up",
+        address: token.address,
+        receivedAt: latestFreshAt,
+        expectedAt: new Date(latestExpected)
+      });
+    }
+    const storedCandles = storedRows.reverse().map((row) => ({
         timestamp: row.timestamp,
         open: Number(row.open),
         high: Number(row.high),
         low: Number(row.low),
         close: Number(row.close),
         volume: Number(row.volume)
-      });
-    }
-    for (const candle of freshCandles) candlesByTimestamp.set(candle.timestamp.getTime(), candle);
-    return [...candlesByTimestamp.values()]
-      .sort((left, right) => left.timestamp.getTime() - right.timestamp.getTime())
-      .slice(-historyCandleCount);
+      }));
+    return {
+      candles: mergeOhlcvHistory(storedCandles, freshCandles, historyCandleCount),
+      freshTimestamps: new Set(freshCandles.map((candle) => candle.timestamp.getTime())),
+      latestFreshAt
+    };
   }
 
   private async getOhlcv(address: string, count: number, now: number): Promise<Candle[]> {
-    const nowSeconds = Math.floor(now / 1000);
-    const url = new URL("/defi/v3/ohlcv", config.BIRDEYE_BASE_URL);
-    url.searchParams.set("address", address);
-    url.searchParams.set("type", MARKET_CANDLE_TIMEFRAME);
-    url.searchParams.set("currency", "usd");
-    url.searchParams.set("time_to", String(nowSeconds));
-    url.searchParams.set("mode", "count");
-    url.searchParams.set("count_limit", String(count));
-    url.searchParams.set("ui_amount_mode", "scaled");
-    url.searchParams.set("padding", "false");
-    url.searchParams.set("outlier", "false");
+    const url = buildBirdeyeOhlcvUrl(config.BIRDEYE_BASE_URL, address, count, now);
     const response = await this.request<BirdeyeEnvelope<OhlcvPayload>>(url);
     const items = Array.isArray(response.data) ? response.data : response.data.items ?? [];
     const candlesByTimestamp = new Map<number, Candle>();
@@ -313,7 +346,39 @@ function latestClosedCandleTimestamp(now: number): number {
 }
 
 function rsiHistoryCandleCount(): number {
-  return Math.min(5000, Math.max(MIN_RSI_HISTORY_CANDLES, config.RSI_PERIOD * RSI_HISTORY_MULTIPLIER));
+  return Math.min(BIRDEYE_V2_OHLCV_MAX_CANDLES, Math.max(MIN_RSI_HISTORY_CANDLES, config.RSI_PERIOD * RSI_HISTORY_MULTIPLIER));
+}
+
+export function buildBirdeyeOhlcvUrl(baseUrl: string, address: string, count: number, now: number): URL {
+  const closedBoundary = floor5Minutes(now);
+  const candleCount = Math.min(BIRDEYE_V2_OHLCV_MAX_CANDLES, Math.max(1, Math.trunc(count)));
+  const url = new URL("/defi/ohlcv", baseUrl);
+  url.searchParams.set("address", address);
+  url.searchParams.set("type", MARKET_CANDLE_TIMEFRAME);
+  url.searchParams.set("currency", "usd");
+  url.searchParams.set("time_from", String(Math.max(0, closedBoundary - candleCount * MARKET_CANDLE_INTERVAL_MS) / 1000));
+  url.searchParams.set("time_to", String(closedBoundary / 1000 - 1));
+  return url;
+}
+
+export function mergeOhlcvHistory(storedCandles: Candle[], freshCandles: Candle[], limit: number): Candle[] {
+  if (freshCandles.length === 0) return [];
+  const candlesByTimestamp = new Map<number, Candle>();
+  for (const candle of storedCandles) candlesByTimestamp.set(candle.timestamp.getTime(), candle);
+  for (const candle of freshCandles) candlesByTimestamp.set(candle.timestamp.getTime(), candle);
+  return [...candlesByTimestamp.values()]
+    .sort((left, right) => left.timestamp.getTime() - right.timestamp.getTime())
+    .slice(-limit);
+}
+
+export function classifyOhlcvProgress(
+  previousAt: Date | null,
+  receivedAt: Date,
+  expectedAt: number
+): "current" | "catching-up" | "no-progress" {
+  if (receivedAt.getTime() >= expectedAt) return "current";
+  if (previousAt && receivedAt.getTime() <= previousAt.getTime()) return "no-progress";
+  return "catching-up";
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -335,7 +400,7 @@ function candleRecord(tokenId: string, address: string, candle: Candle, fdvUsd: 
     fdvUsd: fdvUsd ?? undefined,
     liquidityUsd: liquidityUsd ?? undefined,
     ageMinutes: ageMinutes ?? undefined,
-    source: "birdeye"
+    source: OHLCV_SOURCE
   };
 }
 

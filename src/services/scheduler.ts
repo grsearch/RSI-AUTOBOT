@@ -84,10 +84,13 @@ export class Scheduler {
       }
       const results = await Promise.allSettled(activeTokens.map((token) => limit(() => this.market.refreshToken(token, marketData.get(token.address)))));
       const failures = results.filter((result) => result.status === "rejected");
+      const failureSamples = results.flatMap((result, index) => result.status === "rejected"
+        ? [{ address: activeTokens[index]?.address, error: errorMessage(result.reason) }]
+        : []).slice(0, 5);
       const probes = await this.health.probe();
       const lastError = failures[0]?.status === "rejected" ? errorMessage(failures[0].reason) : probes.errors[0] ?? null;
       await this.updateHealth({ birdeyeOk: Boolean(config.BIRDEYE_API_KEY) && failures.length === 0, heliusOk: probes.heliusOk, jupiterQuoteOk: probes.jupiterQuoteOk, lastMarketCycleAt: new Date(), lastError });
-      if (failures.length > 0) logger.error({ event: "market_cycle_partial_failure", failures: failures.length, tokens: tokens.length, lastError });
+      if (failures.length > 0) logger.error({ event: "market_cycle_partial_failure", failures: failures.length, tokens: tokens.length, failureSamples, lastError });
       if (Date.now() - this.lastCleanupAt > 24 * 60 * 60 * 1000) {
         await prisma.marketSnapshot.deleteMany({ where: { createdAt: { lt: new Date(Date.now() - 90 * 24 * 60 * 60 * 1000) } } });
         this.lastCleanupAt = Date.now();

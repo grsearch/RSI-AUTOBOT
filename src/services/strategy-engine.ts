@@ -3,7 +3,7 @@ import { Decimal } from "decimal.js";
 import { config } from "../config.js";
 import { prisma } from "../db.js";
 import { evaluateBuy, evaluateSell, shouldAddPosition } from "../domain/strategy.js";
-import { MARKET_CANDLE_TIMEFRAME } from "../domain/market.js";
+import { isRsiFresh, MARKET_CANDLE_TIMEFRAME } from "../domain/market.js";
 import type { MarketPoint, StrategyParameters } from "../domain/types.js";
 import { logger } from "../logger.js";
 import { delay } from "./http.js";
@@ -320,7 +320,7 @@ function marketFromToken(token: Token): MarketPoint {
     fdvUsd: Number(token.fdvUsd),
     liquidityUsd: Number(token.liquidityUsd),
     ageMinutes: token.ageMinutes == null ? null : Number(token.ageMinutes),
-    rsi: token.rsi == null ? null : Number(token.rsi)
+    rsi: token.rsi == null || !isRsiFresh(token.lastOhlcvAt, token.lastMarketCheckAt) ? null : Number(token.rsi)
   };
 }
 
@@ -332,7 +332,7 @@ function marketFromTokenOrPosition(token: Token, position: Position): MarketPoin
     fdvUsd: token.fdvUsd == null ? 0 : Number(token.fdvUsd),
     liquidityUsd: token.liquidityUsd == null ? 0 : Number(token.liquidityUsd),
     ageMinutes: token.ageMinutes == null ? null : Number(token.ageMinutes),
-    rsi: token.rsi == null ? null : Number(token.rsi)
+    rsi: token.rsi == null || !isRsiFresh(token.lastOhlcvAt, token.lastMarketCheckAt) ? null : Number(token.rsi)
   };
 }
 

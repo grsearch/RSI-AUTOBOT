@@ -6,9 +6,7 @@ import type {
   SellDecision,
   StrategyParameters
 } from "./types.js";
-import { MARKET_CANDLE_INTERVAL_MS } from "./market.js";
-
-const MAX_CLOSED_CANDLE_AGE_MS = MARKET_CANDLE_INTERVAL_MS * 2;
+import { MARKET_CANDLE_INTERVAL_MS, MAX_CLOSED_CANDLE_AGE_MS } from "./market.js";
 
 export function evaluateBuy(
   market: MarketPoint,
