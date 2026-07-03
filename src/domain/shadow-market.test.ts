@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { normalizePairPrices, selectMainPool, shadowCandleBucket } from "./shadow-market.js";
+import { SHADOW_PRICE_MISMATCH_ERROR, isShadowPoolSampleable, normalizePairPrices, selectMainPool, shadowCandleBucket } from "./shadow-market.js";
 
 const token = "So11111111111111111111111111111111111111112";
 const pairLow = "4Nd1mYz3XvC9eVb6TjK2PqR8sWfH7uG5aL1oN9iM3xQz";
@@ -29,5 +29,11 @@ describe("shadow market normalization", () => {
 
   it("floors samples into five-minute buckets", () => {
     expect(shadowCandleBucket(Date.UTC(2026, 6, 3, 1, 7, 42))).toBe(Date.UTC(2026, 6, 3, 1, 5));
+  });
+
+  it("blocks persistent price-direction mismatches without blocking transient errors", () => {
+    expect(isShadowPoolSampleable(SHADOW_PRICE_MISMATCH_ERROR)).toBe(false);
+    expect(isShadowPoolSampleable("Birdeye pair overview did not return a positive USD price")).toBe(true);
+    expect(isShadowPoolSampleable(null)).toBe(true);
   });
 });

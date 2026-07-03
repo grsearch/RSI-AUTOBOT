@@ -3,7 +3,7 @@ import pLimit from "p-limit";
 import { config } from "../config.js";
 import { prisma } from "../db.js";
 import { calculateRsi } from "../domain/indicators.js";
-import { SHADOW_CANDLE_INTERVAL_MS, normalizePairPrices, selectMainPool, shadowCandleBucket } from "../domain/shadow-market.js";
+import { SHADOW_CANDLE_INTERVAL_MS, SHADOW_PRICE_MISMATCH_ERROR, isShadowPoolSampleable, normalizePairPrices, selectMainPool, shadowCandleBucket } from "../domain/shadow-market.js";
 import { logger } from "../logger.js";
 import { fetchJson } from "./http.js";
 
@@ -32,15 +32,21 @@ export class ShadowMarketService {
       orderBy: { selectedAt: "asc" }
     });
     if (pools.length === 0) return;
+    const sampleablePools = pools.filter((pool) => isShadowPoolSampleable(pool.errorMessage));
+    const blockedPools = pools.length - sampleablePools.length;
+    if (sampleablePools.length === 0) {
+      logger.info({ event: "shadow_rsi_cycle_skipped", reason: "all_pools_price_mismatch", blockedPools });
+      return;
+    }
     if (this.pairRequestRetryAfter > Date.now()) {
       logger.warn({ event: "shadow_pair_sampling_backoff", retryAt: new Date(this.pairRequestRetryAfter) });
       return;
     }
 
     const sampledAt = Date.now();
-    const prices = await this.getPairPrices(pools.map((pool) => pool.pairAddress));
+    const prices = await this.getPairPrices(sampleablePools.map((pool) => pool.pairAddress));
     const limit = pLimit(config.MARKET_REQUEST_CONCURRENCY);
-    const results = await Promise.allSettled(pools.map((pool) => limit(async () => {
+    const results = await Promise.allSettled(sampleablePools.map((pool) => limit(async () => {
       const priceUsd = prices.get(pool.pairAddress);
       if (!(priceUsd && priceUsd > 0)) {
         await prisma.shadowPool.update({
@@ -53,7 +59,7 @@ export class ShadowMarketService {
       if (tradingPriceUsd && (priceUsd / tradingPriceUsd < 0.1 || priceUsd / tradingPriceUsd > 10)) {
         await prisma.shadowPool.update({
           where: { id: pool.id },
-          data: { errorMessage: "Pair price unit or direction does not match the token USD price" }
+          data: { errorMessage: SHADOW_PRICE_MISMATCH_ERROR }
         });
         return false;
       }
@@ -66,7 +72,7 @@ export class ShadowMarketService {
     if (failed.length > 0) {
       logger.warn({ event: "shadow_rsi_partial_failure", failed: failed.length, pools: pools.length, error: errorMessage(failed[0]!.reason) });
     }
-    logger.info({ event: "shadow_rsi_cycle_completed", pools: pools.length, prices: prices.size, updated });
+    logger.info({ event: "shadow_rsi_cycle_completed", pools: pools.length, sampleablePools: sampleablePools.length, blockedPools, prices: prices.size, updated });
   }
 
   private async discoverMissingPools(): Promise<void> {

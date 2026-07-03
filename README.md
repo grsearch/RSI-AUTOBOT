@@ -81,6 +81,15 @@ Jupiter 请求固定携带 `x-api-key`，不使用 keyless 或免费回退接口
 - `GET /api/shadow-rsi/:address?hours=48` 可读取影子 K 线，并把成交时的交易 RSI 与当时最近的已收盘影子 RSI 对齐。
 - 100 个代币约产生 5 次批量请求/分钟；Multiple Pair Overview 是否可用取决于 Birdeye 套餐。若无权限，影子列会显示错误，但实盘交易不受影响。
 - Helius 没有被用作价格源，也没有新增 Helius 消耗；后续只在需要核验链上成交时使用。
+- 一旦池价与代币 USD 价格的比例校验失败，该池会停止周期采样，避免持续消耗 API；诊断完成并修正方向后再重建对应 Shadow 数据。
+
+一次性读取 3 个成功池和 3 个价格方向失败池的原始 Birdeye 数据：
+
+```bash
+pnpm diagnose:shadow-pairs
+```
+
+可用 `pnpm diagnose:shadow-pairs -- --count=5` 调整每类样本数量。输出只包含市场响应和数据库中的池信息，不包含请求头、API Key、钱包或交易签名。
 
 配置：
 
