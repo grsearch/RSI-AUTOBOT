@@ -1,4 +1,5 @@
 export const SHADOW_CANDLE_INTERVAL_MS = 5 * 60 * 1000;
+export const SHADOW_PRICE_MISMATCH_ERROR = "Pair price unit or direction does not match the token USD price";
 
 export type MainPoolCandidate = {
   pairAddress: string;
@@ -10,6 +11,10 @@ type JsonRecord = Record<string, unknown>;
 
 export function shadowCandleBucket(timestamp: number): number {
   return Math.floor(timestamp / SHADOW_CANDLE_INTERVAL_MS) * SHADOW_CANDLE_INTERVAL_MS;
+}
+
+export function isShadowPoolSampleable(errorMessage: string | null): boolean {
+  return errorMessage !== SHADOW_PRICE_MISMATCH_ERROR;
 }
 
 export function selectMainPool(payload: unknown, tokenAddress: string): MainPoolCandidate | null {

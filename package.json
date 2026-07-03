@@ -14,11 +14,12 @@
     "start": "node dist/server.js",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "prisma generate && tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.web.json --noEmit",
+    "typecheck": "prisma generate && tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.web.json --noEmit && tsc -p tsconfig.scripts.json --noEmit",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate deploy",
     "db:migrate:dev": "prisma migrate dev",
-    "db:studio": "prisma studio"
+    "db:studio": "prisma studio",
+    "diagnose:shadow-pairs": "tsx scripts/diagnose-shadow-pairs.ts"
   },
   "dependencies": {
     "@prisma/client": "^6.10.1",
