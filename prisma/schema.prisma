@@ -243,22 +243,23 @@ model MarketSnapshot {
 }
 
 model SystemHealth {
-  id                  String    @id @default("singleton")
-  birdeyeOk           Boolean   @default(false)
-  heliusOk            Boolean   @default(false)
-  jupiterQuoteOk      Boolean   @default(false)
-  schedulerRunning    Boolean   @default(false)
-  tradingPaused       Boolean   @default(false)
-  lastWebhookAt       DateTime?
-  lastMarketCycleAt   DateTime?
-  lastStrategyCycleAt DateTime?
-  watchingCount       Int       @default(0)
-  holdingCount        Int       @default(0)
-  lastBuyStatus       String?
-  lastSellStatus      String?
-  lastError           String?
-  startedAt           DateTime  @default(now())
-  updatedAt           DateTime  @updatedAt
+  id                     String    @id @default("singleton")
+  birdeyeOk              Boolean   @default(false)
+  heliusOk               Boolean   @default(false)
+  jupiterQuoteOk         Boolean   @default(false)
+  schedulerRunning       Boolean   @default(false)
+  tradingPaused          Boolean   @default(false)
+  lastWebhookAt          DateTime?
+  lastMarketCycleAt      DateTime?
+  lastStrategyCycleAt    DateTime?
+  watchingCount          Int       @default(0)
+  holdingCount           Int       @default(0)
+  errorOpenPositionCount Int       @default(0)
+  lastBuyStatus          String?
+  lastSellStatus         String?
+  lastError              String?
+  startedAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
 }
 
 model BacktestRun {

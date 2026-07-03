@@ -134,6 +134,8 @@ JUPITER_API_PLAN=paid
 - 实盘手动卖出 API 还要求 `x-confirm-live: SELL <mint>`，防止误触。
 - 每次 Jupiter 广播前都会保存 `requestId`、签名交易和可预计算哈希；异常重启后 Token 进入 `ERROR`，不会盲目重发。
 - `POST /api/tokens/:address/reconcile` 会读取钱包真实余额；数据库余额不一致时必须提供已确认的 `txHash`，再恢复买入、补仓或卖出记录。
+- 只要存在 `OPEN` 持仓，即使 Token 处于 `ERROR`，行情和 RSI 也会继续刷新。系统会检查最近交易的链上状态并精确核对钱包原始余额；只有确认安全才自动恢复 `HOLDING` 和卖出策略，否则保持 `ERROR` 并在 Dashboard 告警。
+- `force-sell` 对 `ERROR` 持仓执行同一套安全恢复检查，不再要求人工直接修改数据库状态；交易已上链或余额不一致时仍必须先对账。
 
 ## API
 

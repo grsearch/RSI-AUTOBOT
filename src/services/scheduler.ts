@@ -1,3 +1,4 @@
+import type { Prisma } from "@prisma/client";
 import pLimit from "p-limit";
 import { config } from "../config.js";
 import { prisma } from "../db.js";
@@ -51,7 +52,7 @@ export class Scheduler {
     const limit = pLimit(config.MARKET_REQUEST_CONCURRENCY);
     try {
       const tokens = await prisma.token.findMany({
-        where: { status: { in: ["WATCHING", "HOLDING"] } },
+        where: managedTradingTokenWhere,
         include: { positions: { where: { status: "OPEN" }, select: { id: true }, take: 1 } }
       });
       const marketData = await this.market.getMarketDataMultiple(tokens.map((token) => token.address));
@@ -118,7 +119,7 @@ export class Scheduler {
     this.strategyRunning = true;
     try {
       const tokens = await prisma.token.findMany({
-        where: { status: { in: ["WATCHING", "HOLDING"] } },
+        where: managedTradingTokenWhere,
         orderBy: { createdAt: "asc" }
       });
       for (const token of tokens) await this.strategy.processToken(token.id);
@@ -145,17 +146,29 @@ export class Scheduler {
   }
 
   private async updateHealth(data: { birdeyeOk?: boolean; heliusOk?: boolean; jupiterQuoteOk?: boolean; lastMarketCycleAt?: Date; lastStrategyCycleAt?: Date; lastError?: string | null }): Promise<void> {
-    const [watchingCount, holdingCount] = await Promise.all([
+    const [watchingCount, holdingCount, errorOpenPositionCount] = await Promise.all([
       prisma.token.count({ where: { status: "WATCHING" } }),
-      prisma.position.count({ where: { status: "OPEN" } })
+      prisma.position.count({ where: { status: "OPEN" } }),
+      prisma.position.count({ where: { status: "OPEN", token: { status: "ERROR" } } })
     ]);
+    const safetyError = errorOpenPositionCount > 0
+      ? `${errorOpenPositionCount} ERROR token(s) still have OPEN positions and require safety recovery or reconciliation`
+      : undefined;
+    const healthData = { ...data, errorOpenPositionCount, lastError: data.lastError ?? safetyError };
     await prisma.systemHealth.upsert({
       where: { id: "singleton" },
-      create: { id: "singleton", watchingCount, holdingCount, schedulerRunning: true, ...data },
-      update: { watchingCount, holdingCount, ...data }
+      create: { id: "singleton", watchingCount, holdingCount, schedulerRunning: true, ...healthData },
+      update: { watchingCount, holdingCount, ...healthData }
     });
   }
 }
+
+const managedTradingTokenWhere = {
+  OR: [
+    { status: { in: ["WATCHING", "HOLDING"] } },
+    { status: "ERROR", positions: { some: { status: "OPEN" } } }
+  ]
+} satisfies Prisma.TokenWhereInput;
 
 async function recoverTransientStates(): Promise<void> {
   const reactivated = await prisma.token.updateMany({

@@ -3,6 +3,7 @@ import { Decimal } from "decimal.js";
 import { config } from "../config.js";
 import { prisma } from "../db.js";
 import { evaluateBuy, evaluateSell, shouldAddPosition } from "../domain/strategy.js";
+import { assessPositionBalance, assessUncertainTrade } from "../domain/error-position.js";
 import { isRsiFresh, MARKET_CANDLE_TIMEFRAME } from "../domain/market.js";
 import type { MarketPoint, StrategyParameters } from "../domain/types.js";
 import { logger } from "../logger.js";
@@ -31,20 +32,32 @@ export class StrategyEngine {
   private readonly jupiter = new JupiterClient();
   private readonly executor = new TradeExecutor(this.jupiter);
   private readonly positions = new PositionService();
+  private readonly errorRecoveryRetryAfter = new Map<string, { retryAt: number; reason: string }>();
+  private readonly blockedSellSignalLogAfter = new Map<string, number>();
 
   async processToken(tokenId: string): Promise<void> {
     const token = await prisma.token.findUnique({
       where: { id: tokenId },
       include: { positions: { where: { status: "OPEN" }, take: 1, orderBy: { createdAt: "desc" } } }
     });
-    if (!token || token.status === "REMOVED" || token.status === "ERROR") return;
+    if (!token || token.status === "REMOVED") return;
+    const position = token.positions[0];
+    if (token.status === "ERROR") {
+      if (!position) return;
+      const recovery = await this.recoverErrorPosition(token, position);
+      await prisma.token.update({ where: { id: token.id }, data: { lastStrategyAt: new Date() } });
+      if (!recovery.recovered) {
+        this.logBlockedErrorSellSignal(token, position, recovery.reason);
+        return;
+      }
+      token.status = "HOLDING";
+    }
     if (token.status === "CLOSED" && !token.positions[0]) {
       await prisma.token.update({ where: { id: token.id }, data: { status: "WATCHING", removedAt: null, removeReason: null } });
       token.status = "WATCHING";
     }
     if (!hasFreshMarket(token)) return;
     const market = marketFromToken(token);
-    const position = token.positions[0];
 
     if (!position && (market.fdvUsd < config.MIN_FDV_USD || market.liquidityUsd < config.MIN_LIQUIDITY_USD)) {
       await prisma.token.update({
@@ -70,7 +83,135 @@ export class StrategyEngine {
       include: { positions: { where: { status: "OPEN" }, take: 1, orderBy: { createdAt: "desc" } } }
     });
     if (!token?.positions[0]) throw new Error("No open position exists");
+    if (token.status === "ERROR") {
+      const recovery = await this.recoverErrorPosition(token, token.positions[0], true);
+      if (!recovery.recovered) throw new Error(`Cannot force-sell ERROR position safely: ${recovery.reason}. Reconcile the position first.`);
+      token.status = "HOLDING";
+    }
     await this.executeSell(token, token.positions[0], marketFromTokenOrPosition(token, token.positions[0]), "SELL_MANUAL", true);
+  }
+
+  private async recoverErrorPosition(token: Token, position: Position, ignoreBackoff = false): Promise<{ recovered: boolean; reason: string }> {
+    const cached = this.errorRecoveryRetryAfter.get(token.id);
+    if (!ignoreBackoff && cached && cached.retryAt > Date.now()) return { recovered: false, reason: cached.reason };
+
+    const block = (reason: string, details: Record<string, unknown> = {}) => {
+      this.errorRecoveryRetryAfter.set(token.id, { retryAt: Date.now() + 5 * 60 * 1000, reason });
+      logger.error({ event: "error_position_recovery_blocked", address: token.address, positionId: position.id, reason, ...details });
+      return { recovered: false, reason };
+    };
+
+    try {
+      const trade = await prisma.trade.findFirst({
+        where: { tokenId: token.id, status: { in: ["PENDING", "FAILED"] } },
+        orderBy: { createdAt: "desc" },
+        select: {
+          id: true,
+          status: true,
+          side: true,
+          createdAt: true,
+          txHash: true,
+          preparedTxHash: true,
+          signedTransaction: true,
+          requestId: true
+        }
+      });
+
+      if (trade) {
+        const signature = trade.txHash ?? trade.preparedTxHash;
+        let chainState: "success" | "failed" | "not_found" = "not_found";
+        if (signature) {
+          const status = await this.jupiter.connection.getSignatureStatus(signature, { searchTransactionHistory: true });
+          chainState = status.value == null ? "not_found" : status.value.err == null ? "success" : "failed";
+        }
+        const transaction = assessUncertainTrade({
+          hasExecutionReceipt: Boolean(trade.txHash),
+          hasPreparedPayload: Boolean(trade.preparedTxHash || trade.signedTransaction || trade.requestId),
+          createdAt: trade.createdAt.getTime(),
+          now: Date.now(),
+          chainState
+        });
+        if (!transaction.resolved) {
+          return block(transaction.reason, { tradeId: trade.id, tradeSide: trade.side, signature });
+        }
+      }
+
+      const decimals = token.decimals ?? await this.jupiter.getMintDecimals(token.address);
+      const walletBalanceRaw = await this.jupiter.getWalletTokenBalanceRaw(token.address);
+      const balance = assessPositionBalance(position.amountToken.toString(), decimals, walletBalanceRaw);
+      if (!balance.recoverable) {
+        return block(balance.reason, { walletBalanceRaw, recordedBalanceRaw: balance.recordedRaw });
+      }
+
+      const recovered = await prisma.$transaction(async (tx) => {
+        const claimed = await tx.token.updateMany({
+          where: {
+            id: token.id,
+            status: "ERROR",
+            positions: { some: { id: position.id, status: "OPEN", amountToken: position.amountToken } }
+          },
+          data: {
+            status: "HOLDING",
+            decimals,
+            removeReason: "AUTO_RECOVERED_ERROR_POSITION: wallet balance and chain state verified"
+          }
+        });
+        if (claimed.count !== 1) return claimed;
+        if (trade?.status === "PENDING") {
+          await tx.trade.updateMany({
+            where: { id: trade.id, status: "PENDING" },
+            data: { status: "FAILED", errorMessage: "Auto-recovery verified that no unresolved chain balance change remains" }
+          });
+        }
+        return claimed;
+      });
+      if (recovered.count !== 1) {
+        const current = await prisma.token.findUnique({ where: { id: token.id }, select: { status: true } });
+        if (current?.status === "HOLDING") {
+          this.errorRecoveryRetryAfter.delete(token.id);
+          return { recovered: true, reason: "RECOVERED_CONCURRENTLY" };
+        }
+        return block("TOKEN_STATE_CHANGED_DURING_RECOVERY", { currentStatus: current?.status });
+      }
+      this.errorRecoveryRetryAfter.delete(token.id);
+      logger.warn({
+        event: "error_position_auto_recovered",
+        address: token.address,
+        positionId: position.id,
+        walletBalanceRaw,
+        recordedBalanceRaw: balance.recordedRaw
+      });
+      return { recovered: true, reason: "SAFE_TO_RESUME" };
+    } catch (error) {
+      return block(`RECOVERY_CHECK_FAILED: ${message(error)}`);
+    }
+  }
+
+  private logBlockedErrorSellSignal(token: Token, position: Position, recoveryReason: string): void {
+    if (!hasFreshMarket(token) || (this.blockedSellSignalLogAfter.get(token.id) ?? 0) > Date.now()) return;
+    const market = marketFromToken(token);
+    const sell = evaluateSell(
+      market,
+      token.previousRsi == null ? null : Number(token.previousRsi),
+      {
+        averageEntryPriceUsd: Number(position.averageEntryPriceUsd),
+        initialEntryPriceUsd: Number(position.entryPriceUsd),
+        highestPriceUsd: Number(position.highestPriceUsd),
+        trailingActivated: position.trailingActivated,
+        addPositionCount: position.addPositionCount
+      },
+      params
+    );
+    if (!sell.shouldSell) return;
+    this.blockedSellSignalLogAfter.set(token.id, Date.now() + 5 * 60 * 1000);
+    logger.error({
+      event: "error_position_sell_signal_blocked",
+      address: token.address,
+      positionId: position.id,
+      sellReason: sell.reason,
+      rsi: market.rsi,
+      recoveryReason
+    });
   }
 
   private async processWatching(token: Token, market: MarketPoint): Promise<void> {

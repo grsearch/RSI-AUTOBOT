@@ -1,0 +1,2 @@
+ALTER TABLE "SystemHealth"
+ADD COLUMN "errorOpenPositionCount" INTEGER NOT NULL DEFAULT 0;

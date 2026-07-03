@@ -32,6 +32,7 @@ export function OverviewPage() {
         <HealthRow icon={<Radar />} label="Birdeye 行情" ok={data?.health?.birdeyeOk} />
         <HealthRow icon={<Activity />} label="策略调度器" ok={data?.health?.schedulerRunning} />
         <HealthRow icon={<ShieldCheck />} label="交易开关" ok={!data?.health?.tradingPaused} custom={data?.health?.tradingPaused ? "已暂停" : "已开启"} />
+        <HealthRow icon={<ShieldCheck />} label="异常开放持仓" ok={(data?.health?.errorOpenPositionCount ?? 0) === 0} custom={(data?.health?.errorOpenPositionCount ?? 0) === 0 ? "无" : `${data?.health?.errorOpenPositionCount} 个需安全恢复/对账`} />
         {data?.health?.lastError && <p className="health-error">最近错误：{data.health.lastError}</p>}
       </div>
     </div>
