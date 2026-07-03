@@ -36,115 +36,159 @@ enum TradeStatus {
 }
 
 model Token {
-  id                   String           @id @default(cuid())
-  network              String           @default("solana")
-  address              String           @unique
-  symbol               String           @default("UNKNOWN")
-  decimals             Int?
-  gmgnUrl               String
-  status                TokenStatus      @default(WATCHING)
-  fdvUsd                Decimal?         @db.Decimal(30, 10)
-  liquidityUsd          Decimal?         @db.Decimal(30, 10)
-  volume24hUsd          Decimal?         @db.Decimal(30, 10)
-  ageMinutes            Decimal?         @db.Decimal(30, 4)
-  priceUsd              Decimal?         @db.Decimal(40, 20)
-  priceSol              Decimal?         @db.Decimal(40, 20)
-  rsi                   Decimal?         @db.Decimal(20, 10)
-  previousRsi           Decimal?         @db.Decimal(20, 10)
-  chainCreatedAt        DateTime?
-  lastOhlcvAt           DateTime?
-  lastMarketCheckAt     DateTime?
-  lastStrategyAt        DateTime?
-  createdAt             DateTime         @default(now())
-  updatedAt             DateTime         @updatedAt
-  removedAt             DateTime?
-  removeReason          String?
-  positions             Position[]
-  trades                Trade[]
-  candles               OhlcvCandle[]
-  snapshots             MarketSnapshot[]
+  id                String           @id @default(cuid())
+  network           String           @default("solana")
+  address           String           @unique
+  symbol            String           @default("UNKNOWN")
+  decimals          Int?
+  gmgnUrl           String
+  status            TokenStatus      @default(WATCHING)
+  fdvUsd            Decimal?         @db.Decimal(30, 10)
+  liquidityUsd      Decimal?         @db.Decimal(30, 10)
+  volume24hUsd      Decimal?         @db.Decimal(30, 10)
+  ageMinutes        Decimal?         @db.Decimal(30, 4)
+  priceUsd          Decimal?         @db.Decimal(40, 20)
+  priceSol          Decimal?         @db.Decimal(40, 20)
+  rsi               Decimal?         @db.Decimal(20, 10)
+  previousRsi       Decimal?         @db.Decimal(20, 10)
+  chainCreatedAt    DateTime?
+  lastOhlcvAt       DateTime?
+  lastMarketCheckAt DateTime?
+  lastStrategyAt    DateTime?
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+  removedAt         DateTime?
+  removeReason      String?
+  positions         Position[]
+  trades            Trade[]
+  candles           OhlcvCandle[]
+  snapshots         MarketSnapshot[]
+  shadowPool        ShadowPool?
 
   @@index([status])
 }
 
+model ShadowPool {
+  id                 String         @id @default(cuid())
+  tokenId            String         @unique
+  token              Token          @relation(fields: [tokenId], references: [id], onDelete: Cascade)
+  tokenAddress       String         @unique
+  pairAddress        String
+  dex                String?
+  liquidityUsd       Decimal?       @db.Decimal(30, 10)
+  selectedAt         DateTime       @default(now())
+  lastSampleAt       DateTime?
+  lastPriceUsd       Decimal?       @db.Decimal(40, 20)
+  shadowRsiClosed    Decimal?       @db.Decimal(20, 10)
+  shadowRsiLive      Decimal?       @db.Decimal(20, 10)
+  lastClosedCandleAt DateTime?
+  errorMessage       String?
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
+  candles            ShadowCandle[]
+
+  @@index([pairAddress])
+}
+
+model ShadowCandle {
+  id           String     @id @default(cuid())
+  shadowPoolId String
+  shadowPool   ShadowPool @relation(fields: [shadowPoolId], references: [id], onDelete: Cascade)
+  pairAddress  String
+  timestamp    DateTime
+  open         Decimal    @db.Decimal(40, 20)
+  high         Decimal    @db.Decimal(40, 20)
+  low          Decimal    @db.Decimal(40, 20)
+  close        Decimal    @db.Decimal(40, 20)
+  sampleCount  Int        @default(1)
+  isClosed     Boolean    @default(false)
+  rsi7         Decimal?   @db.Decimal(20, 10)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  @@unique([shadowPoolId, timestamp])
+  @@index([shadowPoolId, timestamp])
+  @@index([timestamp])
+}
+
 model Position {
-  id                    String           @id @default(cuid())
-  tokenId               String
-  token                 Token            @relation(fields: [tokenId], references: [id], onDelete: Restrict)
-  status                PositionStatus   @default(OPEN)
-  entryTx               String?
-  exitTx                String?
-  entryTime             DateTime
-  exitTime              DateTime?
-  entryPriceUsd         Decimal          @db.Decimal(40, 20)
-  averageEntryPriceUsd  Decimal          @db.Decimal(40, 20)
-  exitPriceUsd          Decimal?         @db.Decimal(40, 20)
-  amountSolIn           Decimal          @db.Decimal(30, 12)
-  amountToken           Decimal          @db.Decimal(40, 12)
-  amountSolOut          Decimal          @default(0) @db.Decimal(30, 12)
-  totalSolIn            Decimal          @db.Decimal(30, 12)
-  totalTokenAmount      Decimal          @db.Decimal(40, 12)
-  buyFeeSol             Decimal          @default(0) @db.Decimal(30, 12)
-  addBuyFeeSol          Decimal          @default(0) @db.Decimal(30, 12)
-  sellFeeSol            Decimal          @default(0) @db.Decimal(30, 12)
-  entryFdvUsd           Decimal?         @db.Decimal(30, 10)
-  entryLiquidityUsd     Decimal?         @db.Decimal(30, 10)
-  entryAgeMinutes       Decimal?         @db.Decimal(30, 4)
-  entryRsi              Decimal?         @db.Decimal(20, 10)
-  addEntryFdvUsd        Decimal?         @db.Decimal(30, 10)
-  addEntryLiquidityUsd  Decimal?         @db.Decimal(30, 10)
-  addEntryAgeMinutes    Decimal?         @db.Decimal(30, 4)
-  addEntryRsi           Decimal?         @db.Decimal(20, 10)
-  exitFdvUsd            Decimal?         @db.Decimal(30, 10)
-  exitLiquidityUsd      Decimal?         @db.Decimal(30, 10)
-  exitAgeMinutes        Decimal?         @db.Decimal(30, 4)
-  exitRsi               Decimal?         @db.Decimal(20, 10)
-  netPnlSol             Decimal?         @db.Decimal(30, 12)
-  pnlPercent            Decimal?         @db.Decimal(20, 8)
-  highestPriceUsd       Decimal          @db.Decimal(40, 20)
-  trailingActivated     Boolean           @default(false)
-  trailingActivatedAt   DateTime?
-  trailingStopPriceUsd  Decimal?         @db.Decimal(40, 20)
-  addPositionCount      Int               @default(0)
-  sellBatchCompleted    Int               @default(0)
-  lastAddPositionTime   DateTime?
-  sellReason            String?
-  sellRequestedAt       DateTime?
-  createdAt             DateTime          @default(now())
-  updatedAt             DateTime          @updatedAt
-  trades                Trade[]
+  id                   String         @id @default(cuid())
+  tokenId              String
+  token                Token          @relation(fields: [tokenId], references: [id], onDelete: Restrict)
+  status               PositionStatus @default(OPEN)
+  entryTx              String?
+  exitTx               String?
+  entryTime            DateTime
+  exitTime             DateTime?
+  entryPriceUsd        Decimal        @db.Decimal(40, 20)
+  averageEntryPriceUsd Decimal        @db.Decimal(40, 20)
+  exitPriceUsd         Decimal?       @db.Decimal(40, 20)
+  amountSolIn          Decimal        @db.Decimal(30, 12)
+  amountToken          Decimal        @db.Decimal(40, 12)
+  amountSolOut         Decimal        @default(0) @db.Decimal(30, 12)
+  totalSolIn           Decimal        @db.Decimal(30, 12)
+  totalTokenAmount     Decimal        @db.Decimal(40, 12)
+  buyFeeSol            Decimal        @default(0) @db.Decimal(30, 12)
+  addBuyFeeSol         Decimal        @default(0) @db.Decimal(30, 12)
+  sellFeeSol           Decimal        @default(0) @db.Decimal(30, 12)
+  entryFdvUsd          Decimal?       @db.Decimal(30, 10)
+  entryLiquidityUsd    Decimal?       @db.Decimal(30, 10)
+  entryAgeMinutes      Decimal?       @db.Decimal(30, 4)
+  entryRsi             Decimal?       @db.Decimal(20, 10)
+  addEntryFdvUsd       Decimal?       @db.Decimal(30, 10)
+  addEntryLiquidityUsd Decimal?       @db.Decimal(30, 10)
+  addEntryAgeMinutes   Decimal?       @db.Decimal(30, 4)
+  addEntryRsi          Decimal?       @db.Decimal(20, 10)
+  exitFdvUsd           Decimal?       @db.Decimal(30, 10)
+  exitLiquidityUsd     Decimal?       @db.Decimal(30, 10)
+  exitAgeMinutes       Decimal?       @db.Decimal(30, 4)
+  exitRsi              Decimal?       @db.Decimal(20, 10)
+  netPnlSol            Decimal?       @db.Decimal(30, 12)
+  pnlPercent           Decimal?       @db.Decimal(20, 8)
+  highestPriceUsd      Decimal        @db.Decimal(40, 20)
+  trailingActivated    Boolean        @default(false)
+  trailingActivatedAt  DateTime?
+  trailingStopPriceUsd Decimal?       @db.Decimal(40, 20)
+  addPositionCount     Int            @default(0)
+  sellBatchCompleted   Int            @default(0)
+  lastAddPositionTime  DateTime?
+  sellReason           String?
+  sellRequestedAt      DateTime?
+  createdAt            DateTime       @default(now())
+  updatedAt            DateTime       @updatedAt
+  trades               Trade[]
 
   @@index([status])
   @@index([tokenId, status])
 }
 
 model Trade {
-  id                  String       @id @default(cuid())
+  id                  String      @id @default(cuid())
   tokenId             String
-  token               Token        @relation(fields: [tokenId], references: [id], onDelete: Restrict)
+  token               Token       @relation(fields: [tokenId], references: [id], onDelete: Restrict)
   positionId          String?
-  position            Position?    @relation(fields: [positionId], references: [id], onDelete: Restrict)
+  position            Position?   @relation(fields: [positionId], references: [id], onDelete: Restrict)
   side                TradeSide
-  status              TradeStatus  @default(PENDING)
+  status              TradeStatus @default(PENDING)
   batchNumber         Int?
   txHash              String?
   requestId           String?
   preparedTxHash      String?
   signedTransaction   String?
-  amountSol           Decimal      @db.Decimal(30, 12)
-  amountToken         Decimal      @db.Decimal(40, 12)
-  priceUsd            Decimal      @db.Decimal(40, 20)
-  feeSol              Decimal      @default(0) @db.Decimal(30, 12)
-  slippagePercent     Decimal      @db.Decimal(20, 8)
-  priceImpactPercent  Decimal?     @db.Decimal(20, 8)
-  fdvAtTradeUsd       Decimal?     @db.Decimal(30, 10)
-  liquidityAtTradeUsd Decimal?     @db.Decimal(30, 10)
-  ageAtTradeMinutes   Decimal?     @db.Decimal(30, 4)
-  rsiAtTrade          Decimal?     @db.Decimal(20, 10)
+  amountSol           Decimal     @db.Decimal(30, 12)
+  amountToken         Decimal     @db.Decimal(40, 12)
+  priceUsd            Decimal     @db.Decimal(40, 20)
+  feeSol              Decimal     @default(0) @db.Decimal(30, 12)
+  slippagePercent     Decimal     @db.Decimal(20, 8)
+  priceImpactPercent  Decimal?    @db.Decimal(20, 8)
+  fdvAtTradeUsd       Decimal?    @db.Decimal(30, 10)
+  liquidityAtTradeUsd Decimal?    @db.Decimal(30, 10)
+  ageAtTradeMinutes   Decimal?    @db.Decimal(30, 4)
+  rsiAtTrade          Decimal?    @db.Decimal(20, 10)
   reason              String
   router              String?
   errorMessage        String?
-  createdAt           DateTime     @default(now())
+  createdAt           DateTime    @default(now())
   confirmedAt         DateTime?
 
   @@index([positionId])
@@ -154,67 +198,67 @@ model Trade {
 }
 
 model OhlcvCandle {
-  id          String   @id @default(cuid())
-  tokenId     String
-  token       Token    @relation(fields: [tokenId], references: [id], onDelete: Cascade)
-  address     String
-  timestamp   DateTime
-  timeframe   String   @default("1m")
-  open        Decimal  @db.Decimal(40, 20)
-  high        Decimal  @db.Decimal(40, 20)
-  low         Decimal  @db.Decimal(40, 20)
-  close       Decimal  @db.Decimal(40, 20)
-  volume      Decimal  @default(0) @db.Decimal(40, 10)
-  fdvUsd      Decimal? @db.Decimal(30, 10)
+  id           String   @id @default(cuid())
+  tokenId      String
+  token        Token    @relation(fields: [tokenId], references: [id], onDelete: Cascade)
+  address      String
+  timestamp    DateTime
+  timeframe    String   @default("1m")
+  open         Decimal  @db.Decimal(40, 20)
+  high         Decimal  @db.Decimal(40, 20)
+  low          Decimal  @db.Decimal(40, 20)
+  close        Decimal  @db.Decimal(40, 20)
+  volume       Decimal  @default(0) @db.Decimal(40, 10)
+  fdvUsd       Decimal? @db.Decimal(30, 10)
   liquidityUsd Decimal? @db.Decimal(30, 10)
-  ageMinutes  Decimal? @db.Decimal(30, 4)
-  rsi7        Decimal? @db.Decimal(20, 10)
-  source      String   @default("birdeye")
-  createdAt   DateTime @default(now())
+  ageMinutes   Decimal? @db.Decimal(30, 4)
+  rsi7         Decimal? @db.Decimal(20, 10)
+  source       String   @default("birdeye")
+  createdAt    DateTime @default(now())
 
   @@unique([address, timeframe, timestamp])
   @@index([tokenId, timestamp])
 }
 
 model MarketSnapshot {
-  id                String      @id @default(cuid())
+  id                String          @id @default(cuid())
   tokenId           String
-  token             Token       @relation(fields: [tokenId], references: [id], onDelete: Cascade)
+  token             Token           @relation(fields: [tokenId], references: [id], onDelete: Cascade)
   address           String
-  priceUsd          Decimal     @db.Decimal(40, 20)
-  priceSol          Decimal?    @db.Decimal(40, 20)
-  fdvUsd            Decimal?    @db.Decimal(30, 10)
-  liquidityUsd      Decimal?    @db.Decimal(30, 10)
-  ageMinutes        Decimal?    @db.Decimal(30, 4)
-  rsi               Decimal?    @db.Decimal(20, 10)
+  priceUsd          Decimal         @db.Decimal(40, 20)
+  priceSol          Decimal?        @db.Decimal(40, 20)
+  fdvUsd            Decimal?        @db.Decimal(30, 10)
+  liquidityUsd      Decimal?        @db.Decimal(30, 10)
+  ageMinutes        Decimal?        @db.Decimal(30, 4)
+  rsi               Decimal?        @db.Decimal(20, 10)
   tokenStatus       TokenStatus
   positionStatus    PositionStatus?
-  pnlPercent        Decimal?    @db.Decimal(20, 8)
-  trailingActivated Boolean     @default(false)
-  highestPriceUsd   Decimal?    @db.Decimal(40, 20)
-  createdAt         DateTime    @default(now())
+  pnlPercent        Decimal?        @db.Decimal(20, 8)
+  trailingActivated Boolean         @default(false)
+  highestPriceUsd   Decimal?        @db.Decimal(40, 20)
+  createdAt         DateTime        @default(now())
 
   @@index([tokenId, createdAt])
   @@index([createdAt])
 }
 
 model SystemHealth {
-  id                  String   @id @default("singleton")
-  birdeyeOk           Boolean  @default(false)
-  heliusOk            Boolean  @default(false)
-  jupiterQuoteOk      Boolean  @default(false)
-  schedulerRunning    Boolean  @default(false)
-  tradingPaused       Boolean  @default(false)
+  id                  String    @id @default("singleton")
+  birdeyeOk           Boolean   @default(false)
+  heliusOk            Boolean   @default(false)
+  jupiterQuoteOk      Boolean   @default(false)
+  schedulerRunning    Boolean   @default(false)
+  tradingPaused       Boolean   @default(false)
   lastWebhookAt       DateTime?
   lastMarketCycleAt   DateTime?
   lastStrategyCycleAt DateTime?
-  watchingCount       Int      @default(0)
-  holdingCount        Int      @default(0)
+  watchingCount       Int       @default(0)
+  holdingCount        Int       @default(0)
   lastBuyStatus       String?
   lastSellStatus      String?
   lastError           String?
-  startedAt           DateTime @default(now())
-  updatedAt           DateTime @updatedAt
+  startedAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
 }
 
 model BacktestRun {
@@ -230,34 +274,34 @@ model BacktestRun {
 }
 
 model BacktestTrade {
-  id                    String      @id @default(cuid())
-  backtestRunId         String
-  run                   BacktestRun @relation(fields: [backtestRunId], references: [id], onDelete: Cascade)
-  address               String
-  buyTime               DateTime
-  addBuyTime             DateTime?
-  sellTime              DateTime
-  buyPrice               Decimal     @db.Decimal(40, 20)
-  addBuyPrice            Decimal?    @db.Decimal(40, 20)
-  averageEntryPrice      Decimal     @db.Decimal(40, 20)
-  sellPrice              Decimal     @db.Decimal(40, 20)
-  buyRsi                 Decimal?    @db.Decimal(20, 10)
-  addBuyRsi              Decimal?    @db.Decimal(20, 10)
-  sellRsi                Decimal?    @db.Decimal(20, 10)
-  buyFdvUsd               Decimal?    @db.Decimal(30, 10)
-  addBuyFdvUsd            Decimal?    @db.Decimal(30, 10)
-  sellFdvUsd              Decimal?    @db.Decimal(30, 10)
-  buyLiquidityUsd         Decimal?    @db.Decimal(30, 10)
-  addBuyLiquidityUsd      Decimal?    @db.Decimal(30, 10)
-  sellLiquidityUsd        Decimal?    @db.Decimal(30, 10)
-  sellReason              String
-  pnlSol                 Decimal     @db.Decimal(30, 12)
-  pnlPercent             Decimal     @db.Decimal(20, 8)
-  holdingMinutes         Int
-  trailingActivated     Boolean
-  maxProfitPercent      Decimal     @db.Decimal(20, 8)
-  addPositionCount      Int
-  createdAt             DateTime    @default(now())
+  id                 String      @id @default(cuid())
+  backtestRunId      String
+  run                BacktestRun @relation(fields: [backtestRunId], references: [id], onDelete: Cascade)
+  address            String
+  buyTime            DateTime
+  addBuyTime         DateTime?
+  sellTime           DateTime
+  buyPrice           Decimal     @db.Decimal(40, 20)
+  addBuyPrice        Decimal?    @db.Decimal(40, 20)
+  averageEntryPrice  Decimal     @db.Decimal(40, 20)
+  sellPrice          Decimal     @db.Decimal(40, 20)
+  buyRsi             Decimal?    @db.Decimal(20, 10)
+  addBuyRsi          Decimal?    @db.Decimal(20, 10)
+  sellRsi            Decimal?    @db.Decimal(20, 10)
+  buyFdvUsd          Decimal?    @db.Decimal(30, 10)
+  addBuyFdvUsd       Decimal?    @db.Decimal(30, 10)
+  sellFdvUsd         Decimal?    @db.Decimal(30, 10)
+  buyLiquidityUsd    Decimal?    @db.Decimal(30, 10)
+  addBuyLiquidityUsd Decimal?    @db.Decimal(30, 10)
+  sellLiquidityUsd   Decimal?    @db.Decimal(30, 10)
+  sellReason         String
+  pnlSol             Decimal     @db.Decimal(30, 12)
+  pnlPercent         Decimal     @db.Decimal(20, 8)
+  holdingMinutes     Int
+  trailingActivated  Boolean
+  maxProfitPercent   Decimal     @db.Decimal(20, 8)
+  addPositionCount   Int
+  createdAt          DateTime    @default(now())
 
   @@index([backtestRunId])
 }

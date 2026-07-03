@@ -6,16 +6,20 @@ import { logger } from "../logger.js";
 import { HealthService } from "./health.js";
 import { marketVolume24hUsd, MarketDataService } from "./market-data.js";
 import { StrategyEngine } from "./strategy-engine.js";
+import { ShadowMarketService } from "./shadow-market.js";
 
 export class Scheduler {
   private marketTimer: NodeJS.Timeout | null = null;
   private strategyTimer: NodeJS.Timeout | null = null;
+  private shadowTimer: NodeJS.Timeout | null = null;
   private marketRunning = false;
   private strategyRunning = false;
+  private shadowRunning = false;
   private lastCleanupAt = 0;
   private lastVolumeFilterAt = 0;
   private readonly market = new MarketDataService();
   private readonly strategy = new StrategyEngine();
+  private readonly shadow = new ShadowMarketService();
   private readonly health = new HealthService();
 
   async start(): Promise<void> {
@@ -28,11 +32,16 @@ export class Scheduler {
     void this.marketCycle();
     this.marketTimer = setInterval(() => void this.marketCycle(), config.MARKET_FILTER_INTERVAL_MS);
     this.strategyTimer = setInterval(() => void this.strategyCycle(), config.STRATEGY_INTERVAL_MS);
+    if (config.SHADOW_RSI_ENABLED) {
+      void this.shadowCycle();
+      this.shadowTimer = setInterval(() => void this.shadowCycle(), config.SHADOW_SAMPLE_INTERVAL_MS);
+    }
   }
 
   async stop(): Promise<void> {
     if (this.marketTimer) clearInterval(this.marketTimer);
     if (this.strategyTimer) clearInterval(this.strategyTimer);
+    if (this.shadowTimer) clearInterval(this.shadowTimer);
     await prisma.systemHealth.update({ where: { id: "singleton" }, data: { schedulerRunning: false } }).catch(() => undefined);
   }
 
@@ -119,6 +128,19 @@ export class Scheduler {
       logger.error({ event: "strategy_cycle_failed", error: errorMessage(error) });
     } finally {
       this.strategyRunning = false;
+    }
+  }
+
+  private async shadowCycle(): Promise<void> {
+    if (this.shadowRunning) return;
+    this.shadowRunning = true;
+    try {
+      await this.shadow.runCycle();
+    } catch (error) {
+      // The collector is deliberately fail-open: shadow data must never affect trading.
+      logger.error({ event: "shadow_rsi_cycle_failed", error: errorMessage(error) });
+    } finally {
+      this.shadowRunning = false;
     }
   }
 

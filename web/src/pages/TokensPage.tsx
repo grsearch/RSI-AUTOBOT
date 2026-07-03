@@ -7,6 +7,11 @@ import type { PageResponse, Token } from "../types";
 
 const PAGE_SIZE = 30;
 
+function shadowRsi(value?: string, hasPool = false): string {
+  if (value != null) return Number(value).toFixed(1);
+  return hasPool ? "暖机中" : "待选池";
+}
+
 export function TokensPage() {
   const [page, setPage] = useState(1);
   const { data, error, refresh } = useApi<PageResponse<"tokens", Token>>(`/api/tokens?page=${page}&pageSize=${PAGE_SIZE}`, 15_000);
@@ -53,8 +58,8 @@ export function TokensPage() {
       <label><span>代号（可选）</span><input value={symbol} onChange={(event) => setSymbol(event.target.value)} placeholder="UNKNOWN" /></label>
       <button className="primary" disabled={busy}><Plus size={17}/>{busy ? "添加中" : "添加监控"}</button>
     </form>
-    <div className="table-card"><div className="table-scroll"><table><thead><tr><th>代币</th><th>FDV</th><th>流动性</th><th>24h 成交量</th><th>RSI(7)</th><th>K线时间</th><th>当前盈亏</th><th>状态</th><th>更新时间</th><th /></tr></thead><tbody>
-      {(data?.tokens ?? []).map((token) => <tr key={token.id}><td><strong>{token.symbol}</strong><div className="subline"><a className="ca-link" href={token.gmgnUrl} target="_blank" rel="noreferrer"><code>{shortAddress(token.address)}</code><ExternalLink size={13}/></a></div></td><td>{usd(token.fdvUsd)}</td><td>{usd(token.liquidityUsd)}</td><td>{token.volume24hUsd == null ? "—" : usd(token.volume24hUsd)}</td><td className={Number(token.rsi) < 25 ? "accent" : ""}>{token.rsi == null ? "—" : Number(token.rsi).toFixed(1)}</td><td>{time(token.lastOhlcvAt)}</td><td className={token.currentPnlPercent == null ? "" : Number(token.currentPnlPercent) >= 0 ? "positive" : "negative"}>{token.currentPnlPercent == null ? "—" : pct(token.currentPnlPercent)}</td><td><Status value={token.status}/></td><td>{time(token.lastMarketCheckAt)}</td><td>{token.status === "ERROR" && <button className="icon-button" onClick={() => void reconcile(token)} title="链上对账"><RefreshCw size={16}/></button>}<button className="icon-button danger" onClick={() => void remove(token)} disabled={token.positions.length > 0} title={token.positions.length ? "有持仓时不能移除" : "停止监控"}><Trash2 size={16}/></button></td></tr>)}
+    <div className="table-card"><div className="table-scroll"><table><thead><tr><th>代币</th><th>FDV</th><th>流动性</th><th>24h 成交量</th><th>交易RSI(7)</th><th>影子RSI(收盘)</th><th>影子RSI(实时)</th><th>K线时间</th><th>当前盈亏</th><th>状态</th><th>更新时间</th><th /></tr></thead><tbody>
+      {(data?.tokens ?? []).map((token) => <tr key={token.id}><td><strong>{token.symbol}</strong><div className="subline"><a className="ca-link" href={token.gmgnUrl} target="_blank" rel="noreferrer"><code>{shortAddress(token.address)}</code><ExternalLink size={13}/></a></div></td><td>{usd(token.fdvUsd)}</td><td>{usd(token.liquidityUsd)}</td><td>{token.volume24hUsd == null ? "—" : usd(token.volume24hUsd)}</td><td className={Number(token.rsi) < 25 ? "accent" : ""}>{token.rsi == null ? "—" : Number(token.rsi).toFixed(1)}</td><td title={token.shadowPool?.errorMessage ?? `固定池：${token.shadowPool?.pairAddress ?? "尚未发现"}`}>{shadowRsi(token.shadowPool?.shadowRsiClosed, Boolean(token.shadowPool))}</td><td title={`采样：${time(token.shadowPool?.lastSampleAt)}`}>{shadowRsi(token.shadowPool?.shadowRsiLive, Boolean(token.shadowPool))}</td><td>{time(token.lastOhlcvAt)}</td><td className={token.currentPnlPercent == null ? "" : Number(token.currentPnlPercent) >= 0 ? "positive" : "negative"}>{token.currentPnlPercent == null ? "—" : pct(token.currentPnlPercent)}</td><td><Status value={token.status}/></td><td>{time(token.lastMarketCheckAt)}</td><td>{token.status === "ERROR" && <button className="icon-button" onClick={() => void reconcile(token)} title="链上对账"><RefreshCw size={16}/></button>}<button className="icon-button danger" onClick={() => void remove(token)} disabled={token.positions.length > 0} title={token.positions.length ? "有持仓时不能移除" : "停止监控"}><Trash2 size={16}/></button></td></tr>)}
     </tbody></table></div>
       {!data?.tokens.length && <Empty>还没有监控代币。可在上方添加，或向 Webhook 推送。</Empty>}
       {data && <PaginationBar pagination={data.pagination} onPage={setPage} />}

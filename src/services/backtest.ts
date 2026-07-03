@@ -16,7 +16,7 @@ export type BacktestParams = StrategyParameters & {
 
 export const defaultBacktestParams: BacktestParams = {
   initialCapitalSol: 10,
-  buyAmountSol: 0.2,
+  buyAmountSol: 1,
   addAmountSol: 0.2,
   minFdvUsd: 30_000,
   minLiquidityUsd: 10_000,
@@ -26,7 +26,7 @@ export const defaultBacktestParams: BacktestParams = {
   maxSingleCandleDropPercent: 3,
   lpDropThresholdPercent: 10,
   addPositionDropPercent: 30,
-  maxAddPositionCount: 1,
+  maxAddPositionCount: 0,
   trailingActivateProfitPercent: 30,
   trailingDrawdownPercent: 10,
   emergencyStopLossPercent: 0,
