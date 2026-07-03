@@ -28,8 +28,8 @@ const schema = z.object({
   JUPITER_API_KEY: z.string().min(1),
   JUPITER_API_PLAN: z.literal("paid"),
   JUPITER_BASE_URL: z.string().url().default("https://api.jup.ag/swap/v2"),
-  BUY_AMOUNT_SOL: numberFromEnv(0.2).pipe(z.number().positive()),
-  ADD_POSITION_ENABLED: boolFromEnv(true),
+  BUY_AMOUNT_SOL: numberFromEnv(1).pipe(z.number().positive()),
+  ADD_POSITION_ENABLED: boolFromEnv(false),
   ADD_POSITION_AMOUNT_SOL: numberFromEnv(0.2).pipe(z.number().positive()),
   ADD_POSITION_DROP_PERCENT: numberFromEnv(30).pipe(z.number().min(0).max(100)),
   MAX_ADD_POSITION_COUNT: intFromEnv(1).pipe(z.number().min(0).max(10)),
@@ -58,7 +58,11 @@ const schema = z.object({
   MARKET_FILTER_INTERVAL_MS: intFromEnv(180_000).pipe(z.number().min(10_000)),
   VOLUME_FILTER_INTERVAL_MS: intFromEnv(3_600_000).pipe(z.number().min(300_000)),
   STRATEGY_INTERVAL_MS: intFromEnv(30_000).pipe(z.number().min(5_000)),
-  MARKET_REQUEST_CONCURRENCY: intFromEnv(3).pipe(z.number().min(1).max(20))
+  MARKET_REQUEST_CONCURRENCY: intFromEnv(3).pipe(z.number().min(1).max(20)),
+  SHADOW_RSI_ENABLED: boolFromEnv(true),
+  SHADOW_SAMPLE_INTERVAL_MS: intFromEnv(60_000).pipe(z.number().min(15_000).max(300_000)),
+  SHADOW_POOL_DISCOVERY_CONCURRENCY: intFromEnv(2).pipe(z.number().min(1).max(5)),
+  SHADOW_POOL_DISCOVERY_LIMIT: intFromEnv(10).pipe(z.number().min(1).max(20))
 });
 
 const parsed = schema.safeParse(process.env);

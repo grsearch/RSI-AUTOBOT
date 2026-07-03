@@ -11,6 +11,7 @@ import { z } from "zod";
 import { config } from "../config.js";
 import { prisma } from "../db.js";
 import { logger } from "../logger.js";
+import { SHADOW_CANDLE_INTERVAL_MS } from "../domain/shadow-market.js";
 import { BacktestService, defaultBacktestParams } from "../services/backtest.js";
 import { ReconciliationService } from "../services/reconciliation.js";
 import { StrategyEngine } from "../services/strategy-engine.js";
@@ -102,7 +103,23 @@ export function createApp(dependencies: AppDependencies = {}) {
     const [tokens, total] = await prisma.$transaction([
       prisma.token.findMany({
         orderBy: { createdAt: "desc" },
-        include: { positions: { where: { status: "OPEN" }, take: 1, orderBy: { createdAt: "desc" } } },
+        include: {
+          positions: { where: { status: "OPEN" }, take: 1, orderBy: { createdAt: "desc" } },
+          shadowPool: {
+            select: {
+              pairAddress: true,
+              dex: true,
+              liquidityUsd: true,
+              selectedAt: true,
+              lastSampleAt: true,
+              lastPriceUsd: true,
+              shadowRsiClosed: true,
+              shadowRsiLive: true,
+              lastClosedCandleAt: true,
+              errorMessage: true
+            }
+          }
+        },
         skip: page.skip,
         take: page.pageSize
       }),
@@ -116,6 +133,51 @@ export function createApp(dependencies: AppDependencies = {}) {
       return { ...token, currentPnlPercent: pnlPercent };
     });
     response.json({ tokens: items, pagination: paginationMeta(page, total) });
+  }));
+
+  app.get("/api/shadow-rsi/:address", asyncRoute(async (request, response) => {
+    const address = parseAddress(request.params.address);
+    const hours = z.coerce.number().min(1).max(168).default(48).parse(singleQueryValue(request.query.hours));
+    const since = new Date(Date.now() - hours * 60 * 60 * 1000);
+    const pool = await prisma.shadowPool.findUnique({
+      where: { tokenAddress: address },
+      include: {
+        candles: { where: { timestamp: { gte: since } }, orderBy: { timestamp: "asc" } },
+        token: {
+          select: {
+            symbol: true,
+            trades: {
+              where: { createdAt: { gte: since }, status: "CONFIRMED" },
+              orderBy: { createdAt: "asc" },
+              select: { id: true, side: true, createdAt: true, rsiAtTrade: true, priceUsd: true, reason: true }
+            }
+          }
+        }
+      }
+    });
+    if (!pool) throw httpError(404, "Shadow pool has not been discovered yet");
+    const tradeComparisons = pool.token.trades.map((trade) => {
+      const latestAllowed = trade.createdAt.getTime() - SHADOW_CANDLE_INTERVAL_MS;
+      const candle = [...pool.candles].reverse().find((candidate) => candidate.isClosed && candidate.timestamp.getTime() <= latestAllowed);
+      return { ...trade, shadowRsiClosedAtTrade: candle?.rsi7 ?? null, shadowCandleAt: candle?.timestamp ?? null };
+    });
+    response.json({
+      pool: {
+        id: pool.id,
+        tokenAddress: pool.tokenAddress,
+        symbol: pool.token.symbol,
+        pairAddress: pool.pairAddress,
+        dex: pool.dex,
+        liquidityUsd: pool.liquidityUsd,
+        selectedAt: pool.selectedAt,
+        lastSampleAt: pool.lastSampleAt,
+        shadowRsiClosed: pool.shadowRsiClosed,
+        shadowRsiLive: pool.shadowRsiLive,
+        errorMessage: pool.errorMessage
+      },
+      candles: pool.candles,
+      trades: tradeComparisons
+    });
   }));
 
   app.post("/api/tokens", asyncRoute(async (request, response) => {
@@ -353,6 +415,8 @@ function publicSettings() {
     rsiBuyBelow: config.RSI_BUY_BELOW,
     rsiSellCrossDown: config.RSI_SELL_CROSS_DOWN,
     rsiSellAbove: config.RSI_SELL_ABOVE,
+    shadowRsiEnabled: config.SHADOW_RSI_ENABLED,
+    shadowSampleIntervalMs: config.SHADOW_SAMPLE_INTERVAL_MS,
     trailingActivateProfitPercent: config.TRAILING_ACTIVATE_PROFIT_PERCENT,
     trailingDrawdownPercent: config.TRAILING_DRAWDOWN_PERCENT,
     emergencyStopLossPercent: config.EMERGENCY_STOP_LOSS_PERCENT,
