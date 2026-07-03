@@ -72,6 +72,25 @@ Jupiter 请求固定携带 `x-api-key`，不使用 keyless 或免费回退接口
 
 以 100 个监控代币估算，基础 REST 请求量由约 96,000 次/天下降到约 31,500 次/天，并显著减少 OHLCV 返回数据量。实际消耗会受新币数量、失败降级和服务重启次数影响。
 
+## 影子 RSI（不参与交易）
+
+- 使用 Birdeye `/defi/v2/markets` 按流动性选择一次主池，选定后固定，不自动换池。
+- 使用 Birdeye `/defi/v3/pair/overview/multiple` 每分钟批量采样固定池价格，自建独立 5 分钟 K 线和 Wilder RSI(7)。
+- 影子表与交易使用的 `OhlcvCandle`、`Token.rsi` 完全隔离；采集失败只记录日志，不会暂停或改变买卖。
+- Dashboard 同时显示已收盘影子 RSI 和包含当前 K 线的实时影子 RSI。首次启动至少需要 8 根完整 5 分钟 K 线，约 40–45 分钟后才有数值。
+- `GET /api/shadow-rsi/:address?hours=48` 可读取影子 K 线，并把成交时的交易 RSI 与当时最近的已收盘影子 RSI 对齐。
+- 100 个代币约产生 5 次批量请求/分钟；Multiple Pair Overview 是否可用取决于 Birdeye 套餐。若无权限，影子列会显示错误，但实盘交易不受影响。
+- Helius 没有被用作价格源，也没有新增 Helius 消耗；后续只在需要核验链上成交时使用。
+
+配置：
+
+```env
+SHADOW_RSI_ENABLED=true
+SHADOW_SAMPLE_INTERVAL_MS=60000
+SHADOW_POOL_DISCOVERY_CONCURRENCY=2
+SHADOW_POOL_DISCOVERY_LIMIT=10
+```
+
 ## Webhook 示例
 
 ```bash
@@ -122,6 +141,7 @@ JUPITER_API_PLAN=paid
 - `GET /api/pnl/month`
 - `GET /api/health`
 - `GET/POST /api/settings`（运行时只允许暂停/恢复）
+- `GET /api/shadow-rsi/:address?hours=48`（只读影子 RSI 对比）
 - `POST /api/backtest/run`
 - `GET /api/backtest/runs`
 - `GET /api/backtest/runs/:id`
